@@ -1,0 +1,73 @@
+# ==============================================================================
+# NIDAR AirMouse - Default Configuration
+# ==============================================================================
+# This file defines all tuneable parameters for the CV pipeline.
+# Override values per-run by copying this file and passing the path
+# to the config loader.
+#
+# Convention: all paths are relative to the project root (d:\NIDAR).
+# ==============================================================================
+
+# --- Detection Model ---------------------------------------------------------
+model:
+  # Which YOLO model variant to use. "yolov8n.pt" is the nano (smallest/fastest)
+  # variant, ideal for initial prototyping and edge deployment.
+  # Other options: yolov8s.pt (small), yolov8m.pt (medium), yolov8l.pt (large)
+  name: "yolov8n.pt"
+
+  # Minimum confidence score (0.0 to 1.0) for a detection to be kept.
+  # Detections below this threshold are discarded.
+  # Start conservative (0.5) and lower it only if you are missing real survivors.
+  confidence_threshold: 0.5
+
+  # Input image size in pixels (square). YOLO resizes every frame to this
+  # before inference. Smaller = faster but less accurate.
+  # Standard choices: 320, 416, 640 (default), 1280
+  image_size: 640
+
+  # Which hardware device to run inference on.
+  # "cuda:0" = first GPU, "cpu" = CPU-only fallback.
+  device: "cuda:0"
+
+  # COCO class IDs to detect. Class 0 = "person" in the COCO dataset.
+  # We filter to only "person" since survivors are the mission target.
+  target_classes: [0]
+
+# --- Input Sources -----------------------------------------------------------
+input:
+  # Path to a recorded test video (relative to project root).
+  # Used during prototyping. In flight, the camera feed replaces this.
+  video_path: "data/test_videos/sample_flight.mp4"
+
+  # Path to a directory of sample images for batch testing.
+  images_dir: "data/samples/"
+
+# --- Output Paths ------------------------------------------------------------
+output:
+  # Directory where annotated frames and detection logs are saved.
+  results_dir: "outputs/"
+
+  # Directory where model weights are stored (downloaded or exported).
+  models_dir: "models/"
+
+  # Path for the structured detection log (JSON lines format).
+  detection_log: "outputs/detections.jsonl"
+
+# --- Display / Debug ---------------------------------------------------------
+display:
+  # Whether to show a live preview window during inference (disable on headless).
+  show_preview: true
+
+  # Bounding box line thickness in pixels for annotated output frames.
+  bbox_thickness: 2
+
+  # Font scale for confidence labels drawn on frames.
+  font_scale: 0.6
+
+# --- Logging -----------------------------------------------------------------
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+
+  # Log file path (relative to project root). Set to null for console-only.
+  file: "outputs/nidar_cv.log"
