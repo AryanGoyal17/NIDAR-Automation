@@ -1,0 +1,5 @@
+# Computer Vision and Deep Learning Dependencies
+opencv-python>=4.9.0
+ultralytics>=8.2.0
+pillow>=10.0.0
+matplotlib>=3.8.0

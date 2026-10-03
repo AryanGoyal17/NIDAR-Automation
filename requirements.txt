@@ -1,0 +1,3 @@
+# NIDAR CV + Core sprint dependencies
+-r requirements/requirements-base.txt
+-r requirements/requirements-cv.txt

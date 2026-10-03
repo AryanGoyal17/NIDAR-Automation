@@ -1,0 +1,5 @@
+# Core mathematical, schema validation, and config utilities
+numpy>=1.26.0,<2.0.0
+pydantic>=2.7.0
+pyyaml>=6.0
+pytest>=8.0.0
