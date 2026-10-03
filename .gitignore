@@ -1,10 +1,15 @@
-# Python & Virtual Environments
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Virtual Environments
+.venv/
+venv/
 env/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -20,11 +25,19 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.venv/
-venv/
-ENV/
 
-# Model weights & Large artifacts (Never commit model weights directly to git)
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Model Weights & Exported Artifacts (Preserve folder structure with .gitkeep)
+models/*
+!models/.gitkeep
 *.pt
 *.pth
 *.onnx
@@ -32,17 +45,31 @@ ENV/
 *.tflite
 *.weights
 
-# Datasets, raw videos, and run logs
+# Datasets, Sample Media, and Raw Video Recordings
+data/samples/*
+!data/samples/.gitkeep
+data/test_videos/*
+!data/test_videos/.gitkeep
+data/raw/
+datasets/
+runs/
 *.mp4
 *.avi
 *.mkv
 *.mov
-runs/
-datasets/
-data/raw/
+
+# Outputs & Logs
+outputs/*
+!outputs/.gitkeep
 *.log
 
-# Editor & OS files
+# Web & GCS Artifacts
+node_modules/
+dist/
+gcs/frontend/dist/
+.eslintcache
+
+# Editor & OS metadata
 .vscode/
 .idea/
 *.swp
