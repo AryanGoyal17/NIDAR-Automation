@@ -11,9 +11,9 @@ Exit codes:
     0 — All checks passed
     1 — One or more checks failed (see output for details)
 """
-import sys
-import os
+
 import platform
+import sys
 from pathlib import Path
 
 # -- Constants ----------------------------------------------------------------
@@ -63,7 +63,9 @@ check("Python Version", platform.python_version())
 check("Python Executable", sys.executable)
 
 in_venv = sys.prefix != sys.base_prefix
-check("Virtual Environment", "YES (Isolated)" if in_venv else "NO — WARNING: not in .venv!", in_venv)
+check(
+    "Virtual Environment", "YES (Isolated)" if in_venv else "NO — WARNING: not in .venv!", in_venv
+)
 
 # ==============================================================================
 # SECTION 2: Library Versions
@@ -92,7 +94,7 @@ try:
         check("GPU Count", str(gpu_count))
         for i in range(gpu_count):
             name = torch.cuda.get_device_name(i)
-            mem_mb = torch.cuda.get_device_properties(i).total_memory / (1024 ** 2)
+            mem_mb = torch.cuda.get_device_properties(i).total_memory / (1024**2)
             check(f"  GPU {i}", f"{name} ({mem_mb:.0f} MB)")
 
         # Quick GPU tensor round-trip test
@@ -107,13 +109,18 @@ try:
         print("        → Download latest drivers from nvidia.com/drivers")
         print("     2. PyTorch installed without CUDA support.")
         print("        → Reinstall with:")
-        print("           pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124")
+        print(
+            "           pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124"
+        )
         print("     3. No NVIDIA GPU in this machine (e.g. integrated Intel graphics only).")
         print("        → Detection will run on CPU (slower but functional).")
         print()
 
-    check("PyTorch CUDA Version", str(getattr(torch.version, 'cuda', None) or "N/A"))
-    check("cuDNN Version", str(torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else "N/A"))
+    check("PyTorch CUDA Version", str(getattr(torch.version, "cuda", None) or "N/A"))
+    check(
+        "cuDNN Version",
+        str(torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else "N/A"),
+    )
     check("cuDNN Enabled", str(torch.backends.cudnn.enabled))
 
 except ImportError:
@@ -124,8 +131,8 @@ except ImportError:
 # ==============================================================================
 section("OpenCV Visual Test")
 try:
-    import numpy as np
     import cv2
+    import numpy as np
 
     # Create a 640x480 dark frame (simulating a drone camera feed)
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -137,15 +144,17 @@ try:
     cv2.rectangle(frame, (200, 150), (400, 380), (0, 255, 0), 2)
 
     # Add label text above the bounding box
-    cv2.putText(
-        frame, "survivor 0.92", (200, 140),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-    )
+    cv2.putText(frame, "survivor 0.92", (200, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
     # Add frame metadata (like a real detection pipeline would)
     cv2.putText(
-        frame, "NIDAR AirMouse | Frame: 001 | FPS: --",
-        (10, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1
+        frame,
+        "NIDAR AirMouse | Frame: 001 | FPS: --",
+        (10, 470),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (180, 180, 180),
+        1,
     )
 
     # Draw a small "drone position" crosshair

@@ -99,8 +99,11 @@ to draw rectangles with OpenCV's `cv2.rectangle((x1,y1), (x2,y2), ...)`.
 **In Python:**
 ```python
 from datetime import datetime, timezone
-timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") \
-          + f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+
+timestamp = (
+    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.")
+    + f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+)
 ```
 
 ---

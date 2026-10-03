@@ -162,6 +162,7 @@ All contributors must adhere to the standardized project conventions defined in 
 - **Logging Rule:** Never use raw `print()` statements in production code. Use the centralized logger from [`cv/logger.py`](cv/logger.py):
   ```python
   from cv.logger import get_logger
+
   logger = get_logger(__name__)
   logger.info("Detector initialized successfully")
   ```

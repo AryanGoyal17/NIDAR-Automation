@@ -16,11 +16,12 @@ Usage:
 Log format:
     2026-10-03T15:04:00Z | INFO     | detector | Model loaded: yolov8n.pt
 """
+
 from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -37,7 +38,7 @@ class UTCFormatter(logging.Formatter):
     """
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
-        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        dt = datetime.fromtimestamp(record.created, tz=UTC)
         return dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{int(record.msecs):03d}Z"
 
 

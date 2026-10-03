@@ -14,13 +14,13 @@ Usage:
     print(cfg.model.confidence_threshold)  # 0.5
     print(cfg.model.image_size)            # 640
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 import yaml
-
 
 # Default config path (relative to project root)
 DEFAULT_CONFIG_PATH = Path("configs/default.yaml")
@@ -87,7 +87,7 @@ def load_config(config_path: str | Path | None = None) -> ConfigDict:
             f"Run from the project root directory (d:\\NIDAR)."
         )
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     if not isinstance(raw, dict):

@@ -1,0 +1,74 @@
+[project]
+name = "nidar"
+version = "0.1.0"
+description = "Autonomous Drone AI/CV and Ground Control Station for NIDAR AirMouse 2026-27"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26.0,<2.0.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.7.0",
+    "opencv-python>=4.8.0",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "ultralytics>=8.1.0",
+]
+
+[tool.ruff]
+# Target Python version
+target-version = "py312"
+
+# Maximum line length consistent with modern standards
+line-length = 100
+
+# Directories and files to exclude
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "outputs",
+    "models",
+    "datasets",
+    "notebooks",
+]
+
+[tool.ruff.lint]
+# Selected rule sets:
+# E/W: pycodestyle errors and warnings
+# F: Pyflakes (catches undefined variables, unused imports)
+# I: isort (import sorting)
+# UP: pyupgrade (modern Python 3.12 syntax)
+# B: flake8-bugbear (common design gotchas)
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+]
+
+# Sensible ignores for practical robotics & scientific code
+ignore = [
+    "E501",  # Line length handled by formatter
+    "B008",  # Do not perform function call in argument defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cv", "gcs", "interfaces"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+python_classes = ["Test*"]
+addopts = "-v --tb=short"
