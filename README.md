@@ -143,12 +143,19 @@ python scripts/check_env.py
 python scripts/verify_environment.py
 ```
 
-### 3. Running Detection (Phase 3+)
-Once the baseline detection pipeline is loaded:
+### 3. Running Survivor Detection
+Run the baseline detector on a test image, directory, video, or live webcam:
 ```bash
-python -m cv.detectors.run_detector --config configs/default.yaml
+# Run on sample test image (using config defaults for model, device, and thresholds)
+python -m cv.detectors.detect_survivors --source data/samples/survivor_hallway.jpg
+
+# Run with custom overrides
+python -m cv.detectors.detect_survivors --source data/samples/ --conf 0.40 --device cuda:0
+
+# Run live webcam feed with display preview
+python -m cv.detectors.detect_survivors --source 0 --show
 ```
-Output logs will stream to stdout and append to [`outputs/nidar_cv.log`](outputs/nidar_cv.log). All annotated detection frames will save to [`outputs/`](outputs/).
+Output detections stream to stdout and append to [`outputs/runs_nidar/detections.jsonl`](outputs/runs_nidar/detections.jsonl) and [`outputs/runs_nidar/detections.csv`](outputs/runs_nidar/detections.csv). Annotated frames save to [`outputs/runs_nidar/annotated/`](outputs/runs_nidar/annotated/).
 
 ---
 

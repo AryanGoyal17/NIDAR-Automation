@@ -16,8 +16,9 @@
 - [x] Build isolated Python `.venv` and install CUDA-accelerated PyTorch, torchvision, Ultralytics, and OpenCV.
 - [x] Write and pass automated hardware and environment diagnostics (`scripts/check_env.py`).
 - [x] Implement YAML configuration parser (`cv/config.py`) and dual console/file UTC logger (`cv/logger.py`).
-- [x] Formulate project-wide conventions for coordinates, timestamps, frames, and code style ([`conventions.md`](../conventions.md)).
 - [x] Author comprehensive repository documentation (`README.md`, `TEMPLATE.md`, and Day 1 log).
+- [x] Configure code quality tooling (`pyproject.toml`, Ruff linter/formatter, Pytest smoke test suite).
+- [x] Deploy and verify baseline survivor detector (`cv/detectors/detect_survivors.py`) on sample flight imagery.
 
 ---
 
@@ -59,6 +60,19 @@ Today marked the foundational kickoff of the CV and GCS software stacks for proj
    - Authored the top-level `README.md` covering repo architecture, zero-to-hero installation, detector usage, and contribution guidelines.
    - Standardized the engineering diary template (`docs/diary/TEMPLATE.md`) to enforce continuous logging throughout the sprint.
 
+8. **Code Quality & Testing Setup (Step 1.11):**
+   - Configured `pyproject.toml` with `ruff` for all-in-one linting and formatting, replacing legacy Black/Flake8/isort with a single high-performance tool.
+   - Configured `pytest` and authored automated unit tests in `tests/test_cv/test_config.py` verifying config loading, default values, error handling, and `ConfigDict` dictionary serialization.
+   - Ran `ruff check --fix .` and `ruff format .`, standardizing the entire repository.
+
+9. **Baseline Survivor Detector Integration (Step 1.12):**
+   - Placed the baseline detector in `cv/detectors/detect_survivors.py`.
+   - Wired the detector to read default parameters (`model.name`, `confidence_threshold`, `image_size`, `device`, `results_dir`) dynamically from `configs/default.yaml`.
+   - Integrated the centralized logger (`cv.logger`) for structured console and file outputs.
+   - Enforced ISO 8601 UTC timestamping (`YYYY-MM-DDTHH:MM:SS.mmmZ`) in accordance with `docs/conventions.md`.
+   - Placed pre-downloaded offline YOLOv8n weights into `models/yolov8n.pt`.
+   - Successfully executed inference on sample corridor imagery (`data/samples/survivor_hallway.jpg`), emitting structured `detections.jsonl` (Detection Spec v0.1), tabular `detections.csv`, and visual annotated media.
+
 ---
 
 ## 3. What I Measured
@@ -79,6 +93,9 @@ Quantitative metrics recorded during Day 1 setup:
 | **NumPy Version** | 1.26.4 | Pinned `<2.0.0` for C-API binary compatibility |
 | **PyTorch Wheel Download** | 2.53 GB | Download duration: ~28m over Wi-Fi (~1.65 MB/s) |
 | **Diagnostic Test Image** | 640x480 px, 3 channels | Generated and saved in `< 15 ms` |
+| **Pytest Execution Time** | 0.07 s | 5 test cases passed |
+| **YOLOv8n Inference Latency** | 12.3 ms / frame (~81.3 FPS) | CUDA on RTX 3050 Laptop GPU |
+| **Survivor Detection Confidence** | 0.7127 (71.3%) | Single person detected in hallway image |
 
 ---
 
@@ -99,6 +116,16 @@ Quantitative metrics recorded during Day 1 setup:
 - **Symptom:** Installing modern machine learning libraries can pull NumPy 2.x, which breaks pre-compiled C-extensions in certain versions of OpenCV and PyTorch.
 - **Root Cause:** NumPy 2.0 introduced ABI breaking changes for C-extension modules compiled against NumPy 1.x.
 - **Resolution:** Proactively pinned `numpy>=1.24.0,<2.0.0` in `requirements/requirements-base.txt`. The installed environment settled cleanly on `numpy==1.26.4`.
+
+### Incident 4: GitHub Releases Download Connection Reset
+- **Symptom:** Automatic downloading of `yolov8n.pt` through Ultralytics crashed with `ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host`.
+- **Root Cause:** GitHub release redirect domains (`objects.githubusercontent.com`) were intermittently reset by network socket handling.
+- **Resolution:** Downloaded the official weights directly from Hugging Face (`https://huggingface.co/ultralytics/yolov8/resolve/main/yolov8n.pt`) and saved them locally to `models/yolov8n.pt` (6.23 MB). Updated `detect_survivors.py` and `configs/default.yaml` to prefer local weights in `models/` first.
+
+### Incident 5: Package Import Collision with `-m cv.detectors.detect_survivors`
+- **Symptom:** `RuntimeWarning: 'cv.detectors.detect_survivors' found in sys.modules after import of package 'cv.detectors'`.
+- **Root Cause:** `cv/detectors/__init__.py` eagerly imported `main as run_detector` from `detect_survivors.py` while Python's `runpy` module was preparing to run it as a `__main__` entry point.
+- **Resolution:** Cleaned `cv/detectors/__init__.py` to avoid circular eager imports.
 
 ---
 
@@ -151,12 +178,31 @@ Timestamp  : 2026-10-03T16:35:12.418291Z
 ============================================================
 ```
 
-### 2. Verified Files Created Today:
+### 2. Live Detection Output on Hallway Test Image (`outputs/runs_nidar/`):
+- **Terminal Execution Log:**
+```text
+2026-10-03T21:02:33.357Z | INFO     | nidar.detector | Loading YOLO model: models\yolov8n.pt on device: cuda:0...
+2026-10-03T21:02:33.430Z | INFO     | nidar.detector | Processing input source: data/samples/survivor_hallway.jpg (confidence threshold: 0.5)
+2026-10-03T21:02:39.125Z | INFO     | nidar.detector | frame    0 | survivor_hallway.jpg | survivors: 1 | inference: 12.3 ms
+2026-10-03T21:02:39.126Z | INFO     | nidar.detector | Detection run complete.
+2026-10-03T21:02:39.126Z | INFO     | nidar.detector | Frames processed : 1
+2026-10-03T21:02:39.126Z | INFO     | nidar.detector | Total survivors  : 1
+2026-10-03T21:02:39.127Z | INFO     | nidar.detector | Detections JSONL : D:\NIDAR\outputs\runs_nidar\detections.jsonl
+2026-10-03T21:02:39.127Z | INFO     | nidar.detector | Detections CSV   : D:\NIDAR\outputs\runs_nidar\detections.csv
+2026-10-03T21:02:39.127Z | INFO     | nidar.detector | Annotated media  : D:\NIDAR\outputs\runs_nidar\annotated
+```
+- **Generated Detection JSONL (Spec v0.1):**
+```json
+{"frame_id": 0, "source": "survivor_hallway.jpg", "video_time_s": null, "timestamp_utc": "2026-10-03T21:02:39.067Z", "frame_width": 1200, "frame_height": 896, "inference_ms": 12.3, "detections": [{"det_id": 0, "class_name": "person", "confidence": 0.7127, "bbox_xyxy": [557.7, 464.3, 837.3, 704.9], "bbox_center": [697.5, 584.6]}]}
+```
+
+### 3. Verified Files Created Today:
 - Core docs: [`README.md`](../../README.md), [`docs/conventions.md`](../conventions.md)
 - Decisions: [`001_tooling.md`](../decisions/001_tooling.md), [`002_git_workflow.md`](../decisions/002_git_workflow.md), [`003_large_files.md`](../decisions/003_large_files.md)
 - Setups: [`python_verification.md`](../setup/python_verification.md), [`git_verification.md`](../setup/git_verification.md), [`environment_verification.md`](../setup/environment_verification.md)
 - Scripts: `scripts/check_env.py`, `scripts/verify_environment.py`, `scripts/setup_repo_structure.ps1`
-- Configuration & Code: `configs/default.yaml`, `cv/config.py`, `cv/logger.py`
+- Configuration & Code: `configs/default.yaml`, `pyproject.toml`, `cv/config.py`, `cv/logger.py`, `cv/detectors/detect_survivors.py`
+- Test Suite: `tests/test_cv/test_config.py` (5 passing smoke tests)
 - Diary System: `docs/diary/TEMPLATE.md`, `docs/diary/day1_foundation.md`
 
 ---

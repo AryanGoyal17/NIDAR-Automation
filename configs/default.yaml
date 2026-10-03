@@ -10,10 +10,8 @@
 
 # --- Detection Model ---------------------------------------------------------
 model:
-  # Which YOLO model variant to use. "yolov8n.pt" is the nano (smallest/fastest)
-  # variant, ideal for initial prototyping and edge deployment.
-  # Other options: yolov8s.pt (small), yolov8m.pt (medium), yolov8l.pt (large)
-  name: "yolov8n.pt"
+  # Path to local YOLO model weights in models/ (kept offline per ADR 003)
+  name: "models/yolov8n.pt"
 
   # Minimum confidence score (0.0 to 1.0) for a detection to be kept.
   # Detections below this threshold are discarded.
