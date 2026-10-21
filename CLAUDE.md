@@ -25,12 +25,13 @@ The finished detection algorithm is due by the **evening of 22 Oct 2026**. "Done
 
 ## 3. Hardware targets and constraints
 
-- **Development laptop:** Windows or Linux, Python 3.12, PyTorch 2.6 with CUDA 12.4, Ultralytics 8.4, NVIDIA RTX 3050 Laptop GPU (usually 4 GB VRAM; verify with `nvidia-smi`).
+- **Development laptop:** Windows (PowerShell), Python 3.12, PyTorch 2.6 with CUDA 12.4, Ultralytics 8.4, NVIDIA RTX 3050 Laptop GPU (usually 4 GB VRAM; verify with `nvidia-smi`).
 - **Onboard computer (not final):** most probably a **Raspberry Pi 5 (8 or 16 GB, CPU only)**, otherwise the **original Jetson Nano** (4 GB, 128-core Maxwell GPU, JetPack 4.6.x, Ubuntu 18.04, **Python 3.6**, Ultralytics cannot be installed there).
 - The Pi path uses Ultralytics with an NCNN export. The Jetson path uses an ONNX export (opset 12, static shapes), a TensorRT FP16 engine built **on the Nano itself**, and a standalone inference script.
 - Code under `deploy/jetson/` must run on **Python 3.6**: no dataclasses, no walrus operator, no `X | Y` type syntax, no positional-only arguments, no `from __future__ import annotations`.
 - **No internet during a mission.** No cloud APIs. All weights and dependencies must be local files.
 - Detection shares the board with mapping, planning and obstacle avoidance, so keep it light. Detection must never be inside the flight-control loop.
+- The dev machine is Windows: write cross-platform Python scripts (use `pathlib`, no hard-coded separators). If a shell script is unavoidable, also provide a PowerShell version.
 - PyBullet may fail to build on some Python and OS combinations. If it does, use a separate Python 3.10 or 3.11 environment for simulation only.
 
 ## 4. Decisions already made (do not re-open without being asked)
@@ -41,6 +42,8 @@ The finished detection algorithm is due by the **evening of 22 Oct 2026**. "Done
 - **Improvement ladder:** baseline (pretrained YOLOv8) → fine-tuned (simulation data) → tracking + multi-frame confirmation → YOLO11 → (RT-DETR dropped). The final system is the best measured candidate plus tracking and confirmation, exported for the board.
 - **Confirmation rule:** a track is confirmed when it is matched in at least N of the last M frames; choose N and M from measured per-frame rates, not guesses.
 - **Metrics:** recall is the priority (a missed survivor is worse than a false alarm). Report precision, recall, F1, mAP@0.5, and survivor-level false survivors and double counts. Speed in ms per frame **on the target board** when available.
+
+- **Config defaults vs decisions:** `configs/default.yaml` currently holds the defaults of the baseline (pretrained) script: imgsz 640 and conf 0.5. The 416 size applies to the fine-tuned models and deployment (`configs/train.yaml`, planned). The confidence threshold is chosen by the threshold sweep (plan step 6.4); the 0.4 in Section 8 is only an example. Do not change `default.yaml` to match a decision unless asked.
 
 ## 5. Open questions (do not assume; ask or mark as an assumption)
 
@@ -53,25 +56,28 @@ The finished detection algorithm is due by the **evening of 22 Oct 2026**. "Done
 
 ## 6. Status (update as you go)
 
-**Done:** Day-1 foundation (folder structure, config loader, logger, environment checks, decision records 001–003, diary, conventions); baseline YOLOv8n detection script (`cv/detectors/detect_survivors.py`); detection-focused README.
+**Done:** Day-1 foundation (folder structure, config loader, logger, environment checks, decision records 001–003, diary, conventions); baseline YOLOv8n detection script (`cv/detectors/detect_survivors.py`); weight downloader (`scripts/download_weights.py`); PyBullet simulation smoke test (`scripts/check_sim.py`). Weights are **not** in git (`models/` is gitignored).
 
-**Planned (not built yet):** `sim/` (PyBullet data generation), `data_tools/` (cutouts, compositor, dataset builder), `cv/train/`, `cv/eval/`, `cv/tracking/`, export scripts, `deploy/pi/`, `deploy/jetson/`, the detection API, handoff note.
+**Planned (not built yet):** committing the new detection-focused README (plan step 1.1), `sim/` (PyBullet data generation), `data_tools/` (cutouts, compositor, dataset builder), `cv/train/`, `cv/eval/`, `cv/tracking/`, export scripts, `deploy/pi/`, `deploy/jetson/`, the detection API, handoff note.
 
 Mark anything not run as **[PLANNED]**. Never write a result into the README unless it was measured by us.
 
 ## 7. Repo layout and commands
 
 ```
-configs/            YAML settings (default.yaml; arena, randomization, train configs are planned)
-cv/                 detectors/, eval/, tracking/, train/, utils/, config.py, logger.py
-sim/                PyBullet maze, camera, survivors, randomisation, generator, compositor (planned)
-data_tools/         cutouts, dataset builder, inspection (planned)
-deploy/             pi/, jetson/ (planned)
-interfaces/schemas/ detection message JSON schema
-docs/               conventions.md, decisions/ (ADRs), diary/, setup/
-scripts/            check_env.py, export, benchmark
-tests/              unit/, integration/
-data/  models/  outputs/   gitignored, never committed
+configs/            [exists] default.yaml (baseline-script defaults). [PLANNED] arena.yaml, randomization.yaml, composite.yaml, train.yaml, tracking.yaml
+cv/                 [exists] config.py, logger.py, detectors/, utils/. [PLANNED] eval/, tracking/, train/, detector_api.py
+sim/                [PLANNED] PyBullet maze, camera, survivors, randomisation, generator, compositor
+data_tools/         [PLANNED] cutouts, dataset builder, inspection
+deploy/             [PLANNED] pi/, jetson/
+interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
+docs/               [exists] conventions.md, decisions/ (ADRs), diary/, setup/
+scripts/            [exists] check_env.py, verify_environment.py, download_weights.py, check_sim.py, setup scripts. [PLANNED] export, benchmark
+requirements/       [exists] modular requirements
+notebooks/          [exists]
+tests/              [exists] test_cv/, test_interfaces/
+gcs/                [exists but OUT OF SCOPE] backend/ and frontend/ stubs; to be removed (plan step 1.2). Do not build on it.
+data/  models/  outputs/   [exist, gitignored, never committed]. data/test_real/ is PLANNED; models/ holds local weights.
 ```
 
 ```bash
@@ -84,7 +90,7 @@ pytest -q                                                      # tests
 
 ```python
 detector = SurvivorDetector(backend="pytorch|onnx|ncnn|trt", weights=..., imgsz=416, conf=0.4)
-detections = detector.detect(frame_bgr)   # list of Detection
+detections = detector.detect(frame_bgr)   # list of Detection (conf=0.4 above is an example; the final value comes from the threshold sweep)
 # Detection: x1, y1, x2, y2 (pixels, xyxy, origin top-left), confidence (0-1), class_name="person"
 ```
 
