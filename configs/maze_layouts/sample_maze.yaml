@@ -1,0 +1,30 @@
+# ==============================================================================
+# NIDAR AirMouse — Sample Maze Layout
+# ==============================================================================
+# ASCII grid defining a simple test maze.
+#
+# Legend:
+#   '#'  — wall cell (filled with a wall body in simulation)
+#   '.'  — free / passable corridor cell
+#   'S'  — start / entry cell (treated as free space; marks the drone launch point)
+#
+# Each cell maps to a square whose side length equals the corridor_width
+# from configs/arena.yaml. Walls are placed at the centre of '#' cells as
+# boxes of (corridor_width × wall_thickness × wall_height).
+#
+# The grid origin (row 0, col 0) maps to world position (0, 0) at the
+# top-left corner.  x increases rightward (column), y increases forward
+# (row), z is up.
+# ==============================================================================
+
+layout:
+  grid:
+    - "###########"
+    - "#S..#.....#"
+    - "#.#.#.###.#"
+    - "#.#...#...#"
+    - "#.#####.#.#"
+    - "#.......#.#"
+    - "#.###.###.#"
+    - "#...#.....#"
+    - "###########"
