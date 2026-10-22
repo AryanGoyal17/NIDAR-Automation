@@ -294,6 +294,7 @@ def main():
                 detections.append(
                     {
                         "det_id": i,
+                        "class_id": PERSON_CLASS_ID,
                         "class_name": "person",
                         "confidence": round(float(confs[i]), 4),
                         "bbox_xyxy": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],

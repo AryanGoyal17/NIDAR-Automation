@@ -3,7 +3,7 @@
 | Field       | Value                    |
 |------------|--------------------------|
 | **Date**   | 2026-10-03               |
-| **Author** | Aryan (AI/CV + GCS Lead) |
+| **Author** | Aryan (AI/CV Lead)       |
 | **Status** | Living document          |
 
 > **Why conventions?** Multiple sub-teams (CV, Autonomy, SLAM, Simulation,
@@ -98,12 +98,9 @@ to draw rectangles with OpenCV's `cv2.rectangle((x1,y1), (x2,y2), ...)`.
 
 **In Python:**
 ```python
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-timestamp = (
-    datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.")
-    + f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
-)
+timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 ```
 
 ---
@@ -142,14 +139,15 @@ timestamp = (
 
 ## 4. Detection Output Format
 
-Every detection record (whether logged to a file, sent over WebSocket to the
-GCS, or published as a ROS 2 message) must contain these fields:
+Every detection record (whether logged to a file or published to downstream
+subsystems as a message) must contain these fields:
 
 ```json
 {
   "frame_id": 42,
   "timestamp": "2026-10-03T14:32:01.123Z",
   "bbox_xyxy": [200.0, 150.0, 400.0, 380.0],
+  "bbox_center": [300.0, 265.0],
   "confidence": 0.92,
   "class_id": 0,
   "class_name": "person"
