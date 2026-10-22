@@ -1,9 +1,9 @@
 # Engineering Diary — Day [X]: [Short Title]
 
 - **Date:** YYYY-MM-DD
-- **Author / Lead:** [Name], AI/CV + GCS Lead
+- **Author / Lead:** [Name], AI/CV Lead
 - **Sprint / Milestone:** [e.g., Sprint 1: Foundation & Baseline Detector]
-- **Target Subsystem(s):** [CV | GCS | Interfaces | Hardware | Infra]
+- **Target Subsystem(s):** [CV | Interfaces | Hardware | Infra | Sim]
 
 ---
 

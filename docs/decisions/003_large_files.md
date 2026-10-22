@@ -3,7 +3,7 @@
 | Field       | Value                                      |
 |------------|--------------------------------------------|
 | **Date**   | 2026-10-03                                 |
-| **Author** | Aryan (AI/CV + GCS Lead)                   |
+| **Author** | Aryan (AI/CV Lead)                         |
 | **Status** | Accepted                                   |
 | **Scope**  | Team-wide data & weights management policy |
 

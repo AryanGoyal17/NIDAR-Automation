@@ -1,7 +1,7 @@
 # Engineering Diary — Day 1: Environment & Foundations
 
 - **Date:** 2026-10-03
-- **Author / Lead:** Aryan, AI/CV + GCS Lead
+- **Author / Lead:** Aryan, AI/CV Lead
 - **Sprint / Milestone:** Sprint 1 — Foundation & Baseline Detector (Day 1 of 5)
 - **Target Subsystem(s):** CV, Infrastructure, Repository Architecture, Development Environment
 
@@ -24,7 +24,7 @@
 
 ## 2. What I Did
 
-Today marked the foundational kickoff of the CV and GCS software stacks for project NIDAR:
+Today marked the foundational kickoff of the CV software stack for project NIDAR:
 
 1. **Tooling & Architecture Groundwork (Step 1.1):**
    - Assessed competition requirements (AirMouse 2026–27: GPS-denied indoor drone navigation, offline mission constraints).
@@ -37,13 +37,13 @@ Today marked the foundational kickoff of the CV and GCS software stacks for proj
    - Designed a lightweight, collaborative branching workflow suited for multidisciplinary autonomy, SLAM, and simulation teams (`feature/`, `fix/`, PR review rules).
 
 3. **Repository Scaffolding & Large File Isolation (Steps 1.5 – 1.6):**
-   - Built automation scripts (`scripts/setup_repo_structure.ps1` and `.sh`) that generated clean directory hierarchies for `cv/`, `gcs/`, `interfaces/`, `configs/`, `docs/`, `scripts/`, `tests/`, `models/`, and `datasets/`.
+   - Built automation scripts (`scripts/setup_repo_structure.ps1` and `.sh`) that generated clean directory hierarchies for `cv/`, `interfaces/`, `configs/`, `docs/`, `scripts/`, `tests/`, `models/`, and `datasets/`.
    - Created a comprehensive `.gitignore` explicitly blocking model weights (`*.pt`, `*.onnx`, `*.engine`), media datasets, outputs, virtual environments, and IDE artifacts.
    - Authored [`docs/decisions/003_large_files.md`](../decisions/003_large_files.md) detailing our offline shared-drive storage convention with SHA256 checksum tracking.
 
 4. **Dependency Engineering & CUDA Setup (Step 1.7):**
    - Created clean virtual environment `.venv` using Python 3.12.
-   - Segmented requirements into `requirements-base.txt`, `requirements-cv.txt`, and `requirements-gcs.txt` unified under `requirements.txt`.
+   - Segmented requirements into `requirements-base.txt` and `requirements-cv.txt` unified under `requirements.txt`.
    - Installed PyTorch 2.6.0 with CUDA 12.4 acceleration wheels directly from the PyTorch index.
    - Created `scripts/verify_environment.py` to validate package versions automatically.
 
@@ -131,7 +131,7 @@ Quantitative metrics recorded during Day 1 setup:
 
 ## 5. Key Decisions Made
 
-- **ADR 001 — Core Subsystem Tooling:** Python 3.12 + PyTorch (CUDA 12.4) + Ultralytics YOLOv8 for CV; React + Vite + TypeScript for GCS.
+- **ADR 001 — Core Subsystem Tooling:** Python 3.12 + PyTorch (CUDA 12.4) + Ultralytics YOLOv8 for CV.
 - **ADR 002 — Lightweight Git PR Workflow:** Single `main` branch with short-lived feature branches (`feature/`, `fix/`). Squash & merge to maintain a bisectable linear history.
 - **ADR 003 — Strict Exclusion of Large Files:** Zero tolerance for weights or datasets in Git history. All binary assets reside in `models/` or `datasets/` backed by a shared offline drive and SHA256 hashes.
 - **Standardized Coordinate System:** Bounding boxes must use `[x_min, y_min, x_max, y_max]` (`xyxy`) pixel coordinates with origin at the top-left corner `(0, 0)`.

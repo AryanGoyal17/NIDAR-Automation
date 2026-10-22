@@ -3,14 +3,14 @@
 | Field       | Value                        |
 |------------|------------------------------|
 | **Date**   | 2026-10-03                   |
-| **Author** | Aryan (AI/CV + GCS Lead)     |
+| **Author** | Aryan (AI/CV Lead)       |
 | **Status** | Accepted                     |
 | **Scope**  | Team-wide git collaboration  |
 
 ## Context & Team Dynamic
 
-The NIDAR AirMouse project involves multiple sub-teams (Autonomy/SLAM, Simulation, Flight Control, CV/GCS, Hardware).
-The CV + GCS code will produce detection bounding boxes and coordinates consumed by the Autonomy state machine and the GCS interface.
+The NIDAR AirMouse project involves multiple sub-teams (Autonomy/SLAM, Simulation, Flight Control, CV, Hardware).
+The CV detection code will produce detection bounding boxes and coordinates consumed by the Autonomy state machine and downstream mapping.
 A broken `main` branch halts simulation testing and autonomous flight testing for everyone.
 Therefore, we need a lightweight, low-friction workflow that guarantees stability without slowing down individual iteration.
 
@@ -33,7 +33,7 @@ Keep branch names descriptive and prefixed with their domain:
 | Prefix | Usage | Example |
 |---|---|---|
 | `feat/` | New functionality or module | `feat/cv-person-detector` |
-| `fix/` | Bug fixes or issue resolutions | `fix/gcs-telemetry-disconnect` |
+| `fix/` | Bug fixes or issue resolutions | `fix/detector-bbox-clipping` |
 | `docs/` | Documentation, decision records, specs | `docs/detection-output-spec` |
 | `exp/` | Research experiments (may not be merged) | `exp/low-light-clahe-filter` |
 | `test/` | Adding test datasets, mocks, or unit tests | `test/sim-video-mock-stream` |
@@ -42,7 +42,7 @@ Keep branch names descriptive and prefixed with their domain:
 
 Use lightweight conventional commits:
 - `feat(cv): add yolov8n inference loop on recorded video`
-- `fix(gcs): resolve marker coordinate flip on 2D map`
+- `fix(cv): resolve bbox coordinate clipping on edge frames`
 - `docs(arch): update 001_tooling decision table`
 
 ## Pull Request (PR) & Review Rules for a 10-Person Team
