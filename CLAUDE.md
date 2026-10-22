@@ -56,7 +56,7 @@ The finished detection algorithm is due by the **evening of 22 Oct 2026**. "Done
 
 ## 6. Status (update as you go)
 
-**Done:** Day-1 foundation (folder structure, config loader, logger, environment checks, decision records 001–003, diary, conventions); baseline YOLOv8n detection script (`cv/detectors/detect_survivors.py`); weight downloader (`scripts/download_weights.py`); PyBullet simulation smoke test (`scripts/check_sim.py`). Weights are **not** in git (`models/` is gitignored).
+**Done:** Day-1 foundation (folder structure, config loader, logger, environment checks, decision records 001–005, diary, conventions); baseline YOLOv8n detection script (`cv/detectors/detect_survivors.py`); weight downloader (`scripts/download_weights.py`); PyBullet simulation smoke test (`scripts/check_sim.py`). Weights are **not** in git (`models/` is gitignored).
 
 **Planned (not built yet):** committing the new detection-focused README (plan step 1.1), `sim/` (PyBullet data generation), `data_tools/` (cutouts, compositor, dataset builder), `cv/train/`, `cv/eval/`, `cv/tracking/`, export scripts, `deploy/pi/`, `deploy/jetson/`, the detection API, handoff note.
 

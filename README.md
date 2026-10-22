@@ -13,7 +13,7 @@ Software for the **human (survivor) detection** subsystem of the NIDAR team's en
 | Component | Status | Where |
 |---|---|---|
 | Repository structure, config loader, logger, environment checks | [DONE] | `configs/`, `cv/config.py`, `cv/logger.py`, `scripts/` |
-| Conventions, decision records (001–003), engineering diary | [DONE] | `docs/` |
+| Conventions, decision records (001–005), engineering diary | [DONE] | `docs/` |
 | Baseline detector (pretrained YOLOv8n, image / folder / video / webcam) | [DONE] | `cv/detectors/detect_survivors.py` |
 | Model-size and hardware speed test (YOLOv8 n/s/m) | [PLANNED] | `scripts/` |
 | Real test set + evaluation script (precision, recall, mAP, false survivors) | [PLANNED] | `data/`, `cv/eval/` |
@@ -73,8 +73,8 @@ NIDAR-Automation/
 │   ├── diary/            # Daily engineering log and template
 │   └── setup/            # Hardware and software verification records
 ├── scripts/              # Environment checks and utilities
-├── requirements/         # Modular requirements (base, cv, umbrella)
-├── tests/                # unit/ and integration/
+├── requirements/         # Modular requirements (base, cv)
+├── tests/                # test_cv/ and test_interfaces/
 ├── data/                 # Local test media and datasets (gitignored, offline)
 ├── models/               # Weights and engines (.pt, .onnx, .engine; gitignored)
 ├── outputs/              # Logs, annotated runs, detection outputs
@@ -163,17 +163,24 @@ CPU only: `pip install torch torchvision`.
 4. **Install the remaining dependencies**
 
 ```bash
-pip install -r requirements/requirements.txt
+pip install -r requirements.txt
 ```
 
-5. **Run the health check**
+5. **Download pretrained model weights (offline setup)**
+
+```bash
+python scripts/download_weights.py
+```
+
+6. **Run the health checks**
 
 ```bash
 python scripts/check_env.py
 python scripts/verify_environment.py
+python scripts/check_sim.py
 ```
 
-Expected: Python 3.10 or newer, OpenCV and Ultralytics import, the CUDA device is detected, and `outputs/test_opencv_image.png` is created.
+Expected: Python 3.10 or newer, OpenCV and Ultralytics import, CUDA device is detected, `outputs/env_check_test.png` is created, and PyBullet renders `outputs/sim_check.png`.
 
 > The setup above is for the development laptop. The onboard computer uses different software; see Section 3.1 and `deploy/jetson/` (planned).
 
@@ -187,17 +194,24 @@ Expected: Python 3.10 or newer, OpenCV and Ultralytics import, the CUDA device i
 
 ```yaml
 model:
-  weights: "models/yolov8n.pt"
-  confidence_threshold: 0.25
+  name: "models/yolov8n.pt"
+  confidence_threshold: 0.50
   image_size: 640
+  device: "cuda:0"
+  target_classes: [0]
 
-camera:
-  source: 0                 # 0 for webcam, or a path such as "data/samples/sample.mp4"
-  fps: 30
+input:
+  video_path: "data/test_videos/sample_flight.mp4"
+  images_dir: "data/samples/"
+
+output:
+  results_dir: "outputs/"
+  models_dir: "models/"
+  detection_log: "outputs/detections.jsonl"
 
 logging:
   level: "INFO"
-  save_dir: "outputs"
+  file: "outputs/nidar_cv.log"
 ```
 
 ### 5.2 Baseline detector [DONE]
@@ -386,7 +400,7 @@ Each processed frame produces one JSON object (one line in `detections.jsonl`). 
   "frame_id": 12,
   "source": "corridor.mp4",
   "video_time_s": 0.48,
-  "timestamp_utc": "2026-10-20T10:15:00.123456Z",
+  "timestamp_utc": "2026-10-20T10:15:00.123Z",
   "frame_width": 1280,
   "frame_height": 720,
   "inference_ms": 18.4,
@@ -396,8 +410,8 @@ Each processed frame produces one JSON object (one line in `detections.jsonl`). 
       "class_id": 0,
       "class_name": "person",
       "confidence": 0.87,
-      "bbox_xyxy": [412, 180, 530, 470],
-      "bbox_center": [471, 325]
+      "bbox_xyxy": [412.0, 180.0, 530.0, 470.0],
+      "bbox_center": [471.0, 325.0]
     }
   ]
 }
@@ -462,7 +476,7 @@ Defined in `docs/conventions.md`:
 
 - **Pixel coordinates:** origin (0, 0) top-left; x increases right, y increases downward.
 - **Bounding boxes:** `[x_min, y_min, x_max, y_max]` (`xyxy`) in pixels.
-- **Timestamps:** UTC ISO 8601 (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) in all packets, detections and logs.
+- **Timestamps:** UTC ISO 8601 (`YYYY-MM-DDTHH:MM:SS.mmmZ`, millisecond precision) in all packets, detections and logs.
 - **Logging:** no raw `print()` in production code; use `cv/logger.py`:
 
 ```python
@@ -476,7 +490,7 @@ logger.info("Detector initialised")
 
 ## 12. How to contribute
 
-1. Read the decision records in `docs/decisions/` before proposing architectural changes: `001_tooling.md`, `002_git_workflow.md`, `003_large_files.md`.
+1. Read the decision records in `docs/decisions/` before proposing architectural changes: `001_tooling.md`, `002_git_workflow.md`, `003_large_files.md`, `004_model_choice.md`, `005_data_strategy.md`.
 2. Branch from `main` (for example `feature/cv-rtdetr-detector`, `fix/camera-stream-buffer`, `docs/update-readme`).
 3. Keep commits atomic, for example `feat(cv): add rtdetr detector wrapper` or `fix(logger): create missing output directory`.
 4. **Never commit large files** (`.pt`, `.onnx`, `.engine`, `.mp4`, big CSVs or datasets). Keep them in `models/` and `data/` (gitignored) and share them through the team's storage drive.
