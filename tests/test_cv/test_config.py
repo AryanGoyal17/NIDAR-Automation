@@ -66,3 +66,47 @@ def test_config_to_dict_roundtrip():
 
     exported = cfg.to_dict()
     assert exported == data
+
+
+def test_arena_config_file_exists():
+    """Verify that configs/arena.yaml exists in the repository."""
+    config_path = Path("configs/arena.yaml")
+    assert config_path.exists(), f"Missing arena configuration at {config_path.resolve()}"
+
+
+def test_load_arena_config():
+    """Verify that loading configs/arena.yaml succeeds and exposes all required simulation parameters."""
+    cfg = load_config("configs/arena.yaml")
+    assert isinstance(cfg, ConfigDict)
+
+    # Arena geometry & materials
+    assert hasattr(cfg, "arena"), "Config missing 'arena' section"
+    assert cfg.arena.corridor_width > 0
+    assert cfg.arena.wall_height > 0
+    assert isinstance(cfg.arena.walls.color_rgb, list)
+    assert isinstance(cfg.arena.floor.color_rgb, list)
+    assert isinstance(cfg.arena.ceiling.present, bool)
+    assert cfg.arena.ceiling.height > 0
+
+    # Lighting
+    assert hasattr(cfg, "lighting"), "Config missing 'lighting' section"
+    assert isinstance(cfg.lighting.ambient_rgb, list)
+    assert len(cfg.lighting.ambient_rgb) == 3
+
+    # Camera sensor
+    assert hasattr(cfg, "camera"), "Config missing 'camera' section"
+    assert cfg.camera.height > 0
+    assert cfg.camera.tilt_deg >= 0
+    assert cfg.camera.fov.horizontal_deg > 0
+    assert cfg.camera.fov.vertical_deg > 0
+    assert cfg.camera.resolution.width > 0
+    assert cfg.camera.resolution.height > 0
+
+    # Survivor parameters
+    assert hasattr(cfg, "survivor"), "Config missing 'survivor' section"
+    assert cfg.survivor.max_count == 6
+    assert isinstance(cfg.survivor.target_type, str)
+    assert cfg.survivor.dimensions.height_m > 0
+    assert isinstance(cfg.survivor.postures, list)
+    assert len(cfg.survivor.postures) > 0
+

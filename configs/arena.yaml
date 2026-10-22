@@ -1,0 +1,115 @@
+# ==============================================================================
+# NIDAR AirMouse — Arena & Camera Simulation Configuration
+# ==============================================================================
+# Single source of truth for all synthetic data generation, PyBullet simulation,
+# and camera rendering pipelines.
+#
+# Values marked with "# ASSUMPTION" are working engineering estimates that
+# must be confirmed against rulebook specifications and team hardware.
+# See docs/arena_questions.md for the team verification checklist.
+#
+# All spatial units are in SI metres; angles are in degrees.
+# Colors are normalized RGB floats in [0.0, 1.0].
+# ==============================================================================
+
+# --- Arena Physical Structure ------------------------------------------------
+arena:
+  # Corridor clear passage width (metres)
+  corridor_width: 1.5           # ASSUMPTION: Standard indoor drone competition corridor
+
+  # Boundary and partition wall height (metres)
+  wall_height: 2.0              # ASSUMPTION: 2.0m partition wall height
+
+  # Wall thickness for collision and rendering (metres)
+  wall_thickness: 0.1           # ASSUMPTION: 10cm partition thickness
+
+  # Room dimensions inside the maze (metres)
+  rooms:
+    default_width: 3.0          # ASSUMPTION: 3.0m square rooms along corridors
+    default_length: 3.0         # ASSUMPTION: 3.0m square rooms along corridors
+    min_size: 2.0               # ASSUMPTION: Smallest search alcove
+    max_size: 4.5               # ASSUMPTION: Largest central room
+
+  # Enclosure & ceiling configuration
+  ceiling:
+    present: true               # ASSUMPTION: Fully enclosed indoor test facility
+    height: 3.0                 # ASSUMPTION: 3.0m ceiling above floor plane
+    color_rgb: [0.85, 0.85, 0.85] # ASSUMPTION: Off-white ceiling panels
+
+  # Wall appearance and materials
+  walls:
+    color_rgb: [0.80, 0.80, 0.78] # ASSUMPTION: Light grey/beige plywood or drywall
+    texture: "flat_matte"       # ASSUMPTION: Matte paint finish (no strong specular glint)
+
+  # Floor appearance and materials
+  floor:
+    color_rgb: [0.45, 0.45, 0.47] # ASSUMPTION: Medium-grey smooth industrial concrete
+    texture: "concrete"         # ASSUMPTION: Smooth concrete slab
+
+# --- Lighting Conditions -----------------------------------------------------
+lighting:
+  # Diffuse ambient light intensity (RGB components in [0.0, 1.0])
+  ambient_rgb: [0.35, 0.35, 0.35] # ASSUMPTION: Moderate indoor diffuse ambient lighting
+
+  # Primary directional light source (overhead fixtures)
+  directional_color_rgb: [0.90, 0.90, 0.85] # ASSUMPTION: Warm-white fluorescent/LED
+  directional_direction: [0.1, 0.2, -1.0]   # ASSUMPTION: Overhead downward vector [x, y, z]
+
+  # Cast shadow simulation
+  cast_shadows: true            # ASSUMPTION: Survivors cast ground contact shadows
+
+# --- Drone Camera Sensor -----------------------------------------------------
+camera:
+  # Camera mounting height above ground during nominal cruise (metres)
+  height: 0.8                   # ASSUMPTION: Nominal flight altitude in 2.0m corridors
+
+  # Downward tilt angle relative to horizontal forward axis (degrees)
+  # 0 deg = horizontal forward-facing; 90 deg = pure nadir (straight down)
+  tilt_deg: 30.0                # ASSUMPTION: 30-degree downward angle for floor search
+
+  # Sensor resolution in pixels (width x height)
+  resolution:
+    width: 1280                 # ASSUMPTION: 720p HD capture resolution
+    height: 720                 # ASSUMPTION: 720p HD capture resolution
+
+  # Optical field of view (degrees)
+  fov:
+    horizontal_deg: 85.0        # ASSUMPTION: Standard wide-angle drone lens (~85 deg H-FOV)
+    vertical_deg: 54.0          # ASSUMPTION: Matches 16:9 aspect ratio at 85 deg H-FOV
+
+  # Rendering clipping planes (metres)
+  near_clip: 0.1                # ASSUMPTION: 10cm minimum focus plane
+  far_clip: 15.0                # ASSUMPTION: 15m maximum sightline inside maze
+
+  # Frame acquisition rate
+  fps: 30                       # ASSUMPTION: Standard camera stream frame rate
+
+# --- Survivor (Target) Specifications ----------------------------------------
+survivor:
+  # Physical target nature ("human", "mannequin", or "dummy")
+  target_type: "human"          # ASSUMPTION: Real human volunteers or life-size mannequins
+
+  # Maximum number of survivors to be distributed throughout the maze
+  max_count: 6                  # Rulebook specification (up to 6 survivors per run)
+
+  # Physical dimensions (metres)
+  dimensions:
+    height_m: 1.75              # ASSUMPTION: Typical adult stature
+    shoulder_width_m: 0.45      # ASSUMPTION: Adult biacromial shoulder breadth
+    torso_depth_m: 0.25         # ASSUMPTION: Chest-to-back thickness
+
+  # Incapacitated postures to simulate
+  postures:
+    - "lying_supine"            # On back, face up
+    - "lying_prone"             # On stomach, face down
+    - "lying_lateral"           # On side (recovery position)
+    - "sitting_against_wall"    # Slumped sitting against corridor wall
+    - "collapsed_kneeling"      # Incapacitated forward slump
+
+  # Civilian clothing color variations for synthetic randomisation (RGB lists)
+  clothing_color_palette:
+    - [0.15, 0.25, 0.55]        # Navy / blue denim
+    - [0.70, 0.15, 0.15]        # Red jacket / shirt
+    - [0.20, 0.45, 0.25]        # Dark green
+    - [0.25, 0.25, 0.25]        # Charcoal grey
+    - [0.85, 0.80, 0.70]        # Light khaki

@@ -65,7 +65,7 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 ## 7. Repo layout and commands
 
 ```
-configs/            [exists] default.yaml (baseline-script defaults). [PLANNED] arena.yaml, randomization.yaml, composite.yaml, train.yaml, tracking.yaml
+configs/            [exists] default.yaml, arena.yaml. [PLANNED] randomization.yaml, composite.yaml, train.yaml, tracking.yaml
 cv/                 [exists] config.py, logger.py, detectors/, utils/. [PLANNED] eval/, tracking/, train/, detector_api.py
 sim/                [PLANNED] PyBullet maze, camera, survivors, randomisation, generator, compositor
 data_tools/         [PLANNED] cutouts, dataset builder, inspection
