@@ -1,0 +1,11 @@
+# Two rooms — two enclosed rooms connected by a single-cell doorway.
+layout:
+  grid:
+    - "###########"
+    - "#....#....#"
+    - "#.S..#....#"
+    - "#....#....#"
+    - "#.........#"
+    - "#....#....#"
+    - "#....#....#"
+    - "###########"

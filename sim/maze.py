@@ -213,6 +213,29 @@ class MazeBuilder:
             Dataclass with physics client, body IDs, grid metadata, and bounds.
         """
         grid = load_layout(layout_path)
+        return self.build_from_grid(grid, physics_client=physics_client)
+
+    def build_from_grid(
+        self,
+        grid: list[str],
+        physics_client: int | None = None,
+    ) -> MazeResult:
+        """
+        Build a maze from a pre-parsed grid.
+
+        Parameters
+        ----------
+        grid : list[str]
+            ASCII grid rows (validated: all same width, chars in ``{'#', '.', 'S'}``).
+        physics_client : int, optional
+            An existing PyBullet physics client ID.  If ``None``, a new
+            ``p.DIRECT`` (headless) client is created.
+
+        Returns
+        -------
+        MazeResult
+            Dataclass with physics client, body IDs, grid metadata, and bounds.
+        """
         num_rows = len(grid)
         num_cols = len(grid[0])
 

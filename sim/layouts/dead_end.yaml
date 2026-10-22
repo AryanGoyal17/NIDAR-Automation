@@ -1,0 +1,9 @@
+# Dead end — corridor with a dead-end branch to the right.
+layout:
+  grid:
+    - "###########"
+    - "#S........#"
+    - "#.#########"
+    - "#.#########"
+    - "#.#########"
+    - "###########"

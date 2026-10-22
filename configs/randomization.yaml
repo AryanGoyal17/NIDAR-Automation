@@ -1,0 +1,147 @@
+# ==============================================================================
+# NIDAR AirMouse — Simulation Domain Randomization Configuration
+# ==============================================================================
+# Comprehensive parameter ranges for synthetic visual data generation.
+# Covers per-sequence environmental variations and per-frame post-processing
+# camera sensor augmentations.
+#
+# All values are ranges [min, max] or explicit probabilities.
+# Every random process is seeded for full determinism and reproducibility.
+# ==============================================================================
+
+# --- Per-Sequence Environmental Randomization ---------------------------------
+sequence:
+  # Procedural textures for walls and floor
+  # Supported types: "solid", "noise", "checker", "brick"
+  textures:
+    # Generated texture resolution in pixels [height, width]
+    resolution: [256, 256]
+
+    # Available procedural texture generators
+    enabled_types:
+      - "solid"
+      - "noise"
+      - "checker"
+      - "brick"
+
+    solid:
+      # Wall color range (RGB floats in [0.0, 1.0])
+      wall_color_min: [0.65, 0.65, 0.60]
+      wall_color_max: [0.92, 0.90, 0.85]
+      # Floor color range (RGB floats in [0.0, 1.0])
+      floor_color_min: [0.20, 0.20, 0.22]
+      floor_color_max: [0.45, 0.45, 0.48]
+
+    noise:
+      # Base color range for textured noise
+      wall_base_min: [0.60, 0.60, 0.58]
+      wall_base_max: [0.88, 0.88, 0.85]
+      floor_base_min: [0.22, 0.22, 0.24]
+      floor_base_max: [0.42, 0.42, 0.45]
+      # Standard deviation of pixel noise [0.0, 255.0]
+      noise_std_range: [8.0, 28.0]
+
+    checker:
+      # Number of check squares along width/height
+      grid_size_range: [4, 16]
+      # Tile color 1 (RGB in [0.0, 1.0])
+      color1_min: [0.30, 0.30, 0.30]
+      color1_max: [0.55, 0.55, 0.55]
+      # Tile color 2 (RGB in [0.0, 1.0])
+      color2_min: [0.65, 0.65, 0.65]
+      color2_max: [0.92, 0.92, 0.92]
+
+    brick:
+      # Brick grid layout
+      brick_rows_range: [8, 18]
+      brick_cols_range: [4, 10]
+      mortar_thickness_px_range: [2, 5]
+      # Brick face color range (RGB in [0.0, 1.0])
+      brick_color_min: [0.50, 0.30, 0.25]
+      brick_color_max: [0.85, 0.55, 0.45]
+      # Mortar line color range (RGB in [0.0, 1.0])
+      mortar_color_min: [0.65, 0.65, 0.65]
+      mortar_color_max: [0.85, 0.85, 0.85]
+
+  # Directional lighting and shadow randomization
+  lighting:
+    # Azimuth angle range in degrees (0 to 360 around z-axis)
+    azimuth_deg_range: [0.0, 360.0]
+
+    # Elevation angle range in degrees (negative = pointing down towards floor)
+    elevation_deg_range: [-75.0, -25.0]
+
+    # Light distance from arena center in metres
+    distance_range: [8.0, 20.0]
+
+    # Primary directional light color range (warm incandescent to cool daylight)
+    color_r_range: [0.85, 1.00]
+    color_g_range: [0.80, 1.00]
+    color_b_range: [0.75, 1.00]
+
+    # Ambient light intensity coefficient in [0.0, 1.0]
+    ambient_coeff_range: [0.25, 0.45]
+
+    # Diffuse light intensity coefficient in [0.0, 1.0]
+    diffuse_coeff_range: [0.50, 0.80]
+
+    # Specular light reflection coefficient in [0.0, 1.0]
+    specular_coeff_range: [0.05, 0.20]
+
+    # Probability that shadows are enabled for this sequence
+    shadow_prob: 0.85
+
+# --- Per-Frame Post-Processing Augmentation -----------------------------------
+frame:
+  # Additive brightness adjustment (applied to pixel values in [-255, 255])
+  brightness:
+    enabled: true
+    prob: 0.85
+    shift_range: [-25.0, 25.0]
+
+  # Multiplicative contrast adjustment (scaled around center value 128)
+  contrast:
+    enabled: true
+    prob: 0.85
+    factor_range: [0.80, 1.25]
+
+  # Gamma power-law correction (I_out = 255 * (I_in / 255)^gamma)
+  gamma:
+    enabled: true
+    prob: 0.80
+    gamma_range: [0.75, 1.35]
+
+  # Zero-mean Gaussian sensor noise
+  gaussian_noise:
+    enabled: true
+    prob: 0.75
+    std_range: [2.0, 14.0]
+
+  # Directional camera/drone motion blur
+  motion_blur:
+    enabled: true
+    prob: 0.65
+    kernel_size_range: [3, 9]         # Linear blur kernel length (pixels)
+    angle_deg_range: [0.0, 360.0]     # Blur direction angle
+
+  # Lossy JPEG compression artifacts (simulates analog/digital drone video link)
+  jpeg_compression:
+    enabled: true
+    prob: 0.80
+    quality_range: [40, 95]           # Quality level (1-100)
+
+  # Optical lens vignette (radial darkening towards edges/corners)
+  vignette:
+    enabled: true
+    prob: 0.90
+    strength_range: [0.15, 0.45]      # Corner intensity reduction factor
+
+  # Low-light / degraded search environment mode
+  low_light:
+    enabled: true
+    prob: 0.15                        # Probability of selecting low-light mode
+    brightness_shift_range: [-65.0, -35.0]
+    contrast_factor_range: [0.60, 0.85]
+    gamma_range: [1.30, 1.80]
+    noise_std_range: [16.0, 36.0]     # Amplified sensor ISO noise
+    saturation_factor_range: [0.40, 0.70] # Color desaturation in dark

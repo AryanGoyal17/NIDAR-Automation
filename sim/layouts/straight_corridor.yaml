@@ -1,0 +1,6 @@
+# Straight corridor — simplest possible layout for baseline rendering tests.
+layout:
+  grid:
+    - "#############"
+    - "#S..........#"
+    - "#############"

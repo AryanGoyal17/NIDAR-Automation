@@ -1,0 +1,10 @@
+# Loop — corridors forming a cycle around a central island.
+layout:
+  grid:
+    - "#########"
+    - "#S......#"
+    - "#.#####.#"
+    - "#.#####.#"
+    - "#.#####.#"
+    - "#.......#"
+    - "#########"
