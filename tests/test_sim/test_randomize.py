@@ -141,13 +141,13 @@ class TestSequenceRandomizer:
         p2 = seq_rand.sample_sequence_params(seed=202)
         assert p1.light_direction != p2.light_direction
 
-    def test_light_direction_normalized_and_downward(self, seq_rand: SequenceRandomizer) -> None:
+    def test_light_direction_normalized_and_overhead(self, seq_rand: SequenceRandomizer) -> None:
         params = seq_rand.sample_sequence_params(seed=42)
         dx, dy, dz = params.light_direction
         norm = math.hypot(dx, dy, dz)
         assert norm == pytest.approx(1.0, abs=1e-4)
-        # Downward illumination (negative z)
-        assert dz < 0.0
+        # Overhead illumination pointing towards light source above floor (PyBullet convention: z > 0)
+        assert dz > 0.0
 
     def test_apply_to_sim_succeeds(self, seq_rand: SequenceRandomizer) -> None:
         cid = p.connect(p.DIRECT)

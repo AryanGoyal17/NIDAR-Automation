@@ -53,7 +53,10 @@ lighting:
 
   # Primary directional light source (overhead fixtures)
   directional_color_rgb: [0.90, 0.90, 0.85] # ASSUMPTION: Warm-white fluorescent/LED
-  directional_direction: [0.1, 0.2, -1.0]   # ASSUMPTION: Overhead downward vector [x, y, z]
+  directional_direction: [0.1, 0.2, 1.0]    # ASSUMPTION: Vector pointing toward overhead light source [x, y, z]
+
+  # Specular light reflection coefficient in [0.0, 1.0]
+  specular_coeff: 0.1           # ASSUMPTION: Low-specularity matte indoor surfaces
 
   # Cast shadow simulation
   cast_shadows: true            # ASSUMPTION: Survivors cast ground contact shadows

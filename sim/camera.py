@@ -157,11 +157,13 @@ class PinholeCamera:
                 float(d) for d in light_cfg.directional_direction
             ]
             self.cast_shadows: bool = bool(light_cfg.cast_shadows)
+            self.specular_coeff: float = float(getattr(light_cfg, "specular_coeff", 0.1))
         else:
             self.ambient_coeff = 0.35
             self.directional_color = [0.90, 0.90, 0.85]
-            self.directional_direction = [0.1, 0.2, -1.0]
+            self.directional_direction = [0.1, 0.2, 1.0]
             self.cast_shadows = True
+            self.specular_coeff = 0.1
 
         # Precompute projection matrix
         self.aspect_ratio: float = self.width / float(self.height)
@@ -251,6 +253,7 @@ class PinholeCamera:
         light_distance: float | None = None,
         ambient_coeff: float | None = None,
         diffuse_coeff: float | None = None,
+        specular_coeff: float | None = None,
         shadow: int | bool | None = None,
     ) -> RenderOutput:
         """
@@ -272,6 +275,8 @@ class PinholeCamera:
             Override ambient light intensity.
         diffuse_coeff : float, optional
             Override diffuse light intensity.
+        specular_coeff : float, optional
+            Override specular reflection intensity.
         shadow : int or bool, optional
             Override shadow casting flag (0/False or 1/True).
 
@@ -294,12 +299,17 @@ class PinholeCamera:
             "projectionMatrix": self.projection_matrix,
             "renderer": self.renderer,
             "flags": p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
-            "lightDirection": light_direction
-            if light_direction is not None
-            else self.directional_direction,
+            "lightDirection": (
+                light_direction if light_direction is not None else self.directional_direction
+            ),
             "lightColor": light_color if light_color is not None else self.directional_color,
-            "lightAmbientCoeff": ambient_coeff if ambient_coeff is not None else self.ambient_coeff,
+            "lightAmbientCoeff": (
+                ambient_coeff if ambient_coeff is not None else self.ambient_coeff
+            ),
             "lightDiffuseCoeff": diffuse_coeff if diffuse_coeff is not None else 0.65,
+            "lightSpecularCoeff": (
+                float(specular_coeff) if specular_coeff is not None else self.specular_coeff
+            ),
             "shadow": use_shadow,
         }
         if light_distance is not None:

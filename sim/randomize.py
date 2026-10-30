@@ -330,14 +330,14 @@ class SequenceRandomizer:
 
         # 2. Lighting direction (Azimuth & Elevation)
         az_range = self.light_cfg.get("azimuth_deg_range", [0.0, 360.0])
-        el_range = self.light_cfg.get("elevation_deg_range", [-75.0, -25.0])
+        el_range = self.light_cfg.get("elevation_deg_range", [25.0, 75.0])
         az_deg = rng_py.uniform(az_range[0], az_range[1])
         el_deg = rng_py.uniform(el_range[0], el_range[1])
 
         az_rad = math.radians(az_deg)
         el_rad = math.radians(el_deg)
-        # Cartesian light direction pointing from light source towards arena center:
-        # Elevation is negative (pointing down)
+        # Cartesian light direction pointing toward light source (PyBullet convention: z > 0):
+        # Elevation is positive (pointing toward overhead light source above the floor)
         dx = math.cos(el_rad) * math.cos(az_rad)
         dy = math.cos(el_rad) * math.sin(az_rad)
         dz = math.sin(el_rad)

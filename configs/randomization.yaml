@@ -68,8 +68,8 @@ sequence:
     # Azimuth angle range in degrees (0 to 360 around z-axis)
     azimuth_deg_range: [0.0, 360.0]
 
-    # Elevation angle range in degrees (negative = pointing down towards floor)
-    elevation_deg_range: [-75.0, -25.0]
+    # Elevation angle range in degrees (positive = pointing toward overhead light above floor)
+    elevation_deg_range: [25.0, 75.0]
 
     # Light distance from arena center in metres
     distance_range: [8.0, 20.0]

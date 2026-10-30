@@ -86,3 +86,42 @@ class TestRendering:
         cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=160, height=90)
         fps = cam.benchmark(num_frames=5, physics_client=pybullet_session)
         assert fps > 0.0
+
+    def test_lit_floor_brighter_than_ambient_only(self, pybullet_session: int) -> None:
+        """Verify that PyBullet lightDirection (z > 0 pointing to overhead light)
+        produces direct illumination on the floor clearly above ambient-only."""
+        import cv2
+
+        from sim.labels import decode_segmentation_mask
+        from sim.maze import MazeBuilder, load_layout
+
+        layout_path = Path("sim/layouts/straight_corridor.yaml")
+        grid = load_layout(layout_path)
+        builder = MazeBuilder(arena_config_path=ARENA_CONFIG)
+        maze = builder.build_from_grid(grid, physics_client=pybullet_session)
+
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        pose = CameraPose(x=2.25, y=2.25, z=0.8, yaw=0.0, pitch=-30.0)
+
+        try:
+            # 1. Lit render (default overhead directional light, z > 0)
+            out_lit = cam.render(pose, physics_client=pybullet_session)
+            gray_lit = cv2.cvtColor(out_lit.bgr, cv2.COLOR_BGR2GRAY)
+            mask = decode_segmentation_mask(out_lit.seg_mask)
+            floor_mask = mask == maze.floor_id
+
+            assert floor_mask.any(), "Floor must be visible in render"
+            mean_floor_lit = float(gray_lit[floor_mask].mean())
+
+            # 2. Ambient-only render (diffuse_coeff=0.0)
+            out_ambient = cam.render(pose, physics_client=pybullet_session, diffuse_coeff=0.0)
+            gray_ambient = cv2.cvtColor(out_ambient.bgr, cv2.COLOR_BGR2GRAY)
+            mean_floor_ambient = float(gray_ambient[floor_mask].mean())
+
+            # In a properly lit scene, the floor grey should be clearly above ambient-only
+            assert mean_floor_lit > mean_floor_ambient + 20.0, (
+                f"Lit floor ({mean_floor_lit:.1f}) not clearly brighter than "
+                f"ambient-only ({mean_floor_ambient:.1f})"
+            )
+        finally:
+            p.resetSimulation(physicsClientId=pybullet_session)
