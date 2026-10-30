@@ -21,9 +21,9 @@ Usage::
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 # Ensure project root is in sys.path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -83,7 +83,7 @@ def render_layout_frames(
         frame_bgr = out.bgr.copy()
 
         # Add visual label overlay
-        label = f"{layout_name} #{idx+1} [yaw={pose.yaw:.0f} p={pose.pitch:.0f}]"
+        label = f"{layout_name} #{idx + 1} [yaw={pose.yaw:.0f} p={pose.pitch:.0f}]"
         cv2.rectangle(frame_bgr, (5, 5), (5 + len(label) * 9 + 10, 28), (20, 20, 20), -1)
         cv2.putText(
             frame_bgr,
@@ -210,7 +210,9 @@ def main() -> None:
         p.disconnect(cid)
 
     elapsed = time.perf_counter() - t_start
-    print(f"  Rendered {len(all_frames)} frames in {elapsed:.2f}s ({len(all_frames)/elapsed:.1f} FPS)")
+    print(
+        f"  Rendered {len(all_frames)} frames in {elapsed:.2f}s ({len(all_frames) / elapsed:.1f} FPS)"
+    )
 
     # Build 4x6 contact sheet
     print("  Assembling 4×6 contact sheet...")

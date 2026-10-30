@@ -22,8 +22,6 @@ import numpy as np
 import pytest
 
 from sim.labels import (
-    DEFAULT_CLASS_ID,
-    DEFAULT_CLASS_NAME,
     SurvivorLabel,
     compute_box_for_body_ids,
     compute_survivor_labels,

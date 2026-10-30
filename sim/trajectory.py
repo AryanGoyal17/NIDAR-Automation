@@ -26,14 +26,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
-from collections import deque
-from dataclasses import dataclass
 import math
-from pathlib import Path
 import random
-from typing import Any
-
-import numpy as np
+from collections import deque
+from pathlib import Path
 
 from cv.config import load_config
 from sim.camera import CameraPose
@@ -412,7 +408,6 @@ class TrajectorySampler:
         curr_z = nominal_z
         curr_pitch = nominal_pitch
         curr_yaw = 0.0
-        curr_roll = 0.0
 
         for i in range(len(points)):
             px, py = points[i]

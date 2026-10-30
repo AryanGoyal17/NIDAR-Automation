@@ -14,18 +14,14 @@ Validates:
 
 from __future__ import annotations
 
-import math
-from pathlib import Path
-
 import pybullet as p
 import pytest
 
-from sim.maze import MazeBuilder, MazeResult, FREE_CHARS
+from sim.maze import FREE_CHARS, MazeBuilder, MazeResult
 from sim.survivor import (
-    SurvivorInfo,
-    SurvivorPlacer,
-    POSTURES,
     _POSTURE_BUILDERS,
+    POSTURES,
+    SurvivorPlacer,
 )
 
 # Shared inline grid for testing.
@@ -71,7 +67,7 @@ class TestDeterminism:
         placer.remove_all(s2, maze.physics_client)
 
         assert len(s1) == len(s2), "Count mismatch"
-        for a, b in zip(s1, s2):
+        for a, b in zip(s1, s2, strict=True):
             assert a.posture == b.posture
             assert a.cell == b.cell
             assert abs(a.yaw_deg - b.yaw_deg) < 1e-9
@@ -86,9 +82,8 @@ class TestDeterminism:
 
         # At least one attribute should differ between different seeds.
         any_diff = any(
-            a.posture != b.posture or a.cell != b.cell
-            or abs(a.yaw_deg - b.yaw_deg) > 0.01
-            for a, b in zip(s1, s2)
+            a.posture != b.posture or a.cell != b.cell or abs(a.yaw_deg - b.yaw_deg) > 0.01
+            for a, b in zip(s1, s2, strict=True)
         )
         assert any_diff, "Different seeds produced identical survivors"
 
@@ -135,8 +130,15 @@ class TestPostures:
         cloth = (0.3, 0.3, 0.3)
 
         ids = builder_fn(
-            maze.physics_client, cx, cy, yaw_rad,
-            h, sw, td, skin, cloth,
+            maze.physics_client,
+            cx,
+            cy,
+            yaw_rad,
+            h,
+            sw,
+            td,
+            skin,
+            cloth,
         )
         assert isinstance(ids, list)
         assert len(ids) >= 2, f"{posture} should have at least 2 body parts"
@@ -156,9 +158,7 @@ class TestScale:
         for seed in range(50):
             survivors = placer.place(maze, n=1, seed=seed)
             for s in survivors:
-                assert 0.85 <= s.scale <= 1.15, (
-                    f"Scale {s.scale} out of [0.85, 1.15]"
-                )
+                assert 0.85 <= s.scale <= 1.15, f"Scale {s.scale} out of [0.85, 1.15]"
             placer.remove_all(survivors, maze.physics_client)
 
 
@@ -173,9 +173,7 @@ class TestPlacement:
             survivors = placer.place(maze, n=3, seed=seed)
             for s in survivors:
                 r, c = s.cell
-                assert maze.grid[r][c] in FREE_CHARS, (
-                    f"Survivor at ({r},{c}) is on a wall cell"
-                )
+                assert maze.grid[r][c] in FREE_CHARS, f"Survivor at ({r},{c}) is on a wall cell"
             placer.remove_all(survivors, maze.physics_client)
 
     def test_no_overlapping_cells(self, maze: MazeResult, placer: SurvivorPlacer) -> None:

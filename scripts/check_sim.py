@@ -115,7 +115,9 @@ def main() -> int:
             return 1
 
         reloaded = Image.open(OUTPUT_PATH)
-        print(f"  [OK] Verified saved image: format={reloaded.format}, size={reloaded.size}, mode={reloaded.mode}")
+        print(
+            f"  [OK] Verified saved image: format={reloaded.format}, size={reloaded.size}, mode={reloaded.mode}"
+        )
 
     finally:
         p.disconnect(physics_client)

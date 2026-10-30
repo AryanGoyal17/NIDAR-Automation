@@ -1,4 +1,3 @@
-
 """
 tests/test_sim/test_maze.py — Unit tests for sim.maze MazeBuilder
 =================================================================
@@ -39,9 +38,7 @@ def _count_char(grid: list[str], ch: str) -> int:
 def _write_temp_layout(grid_rows: list[str]) -> Path:
     """Write a temporary YAML layout file and return its path."""
     data = {"layout": {"grid": grid_rows}}
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, encoding="utf-8"
-    )
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
     yaml.safe_dump(data, tmp)
     tmp.close()
     return Path(tmp.name)
@@ -96,17 +93,13 @@ class TestLoadLayout:
 # Wall count tests
 # --------------------------------------------------------------------------- #
 class TestWallCount:
-    def test_wall_count_matches_grid(
-        self, sample_result, sample_grid: list[str]
-    ) -> None:
+    def test_wall_count_matches_grid(self, sample_result, sample_grid: list[str]) -> None:
         expected_walls = _count_char(sample_grid, "#")
         assert sample_result.num_walls == expected_walls, (
             f"Expected {expected_walls} walls from grid, got {sample_result.num_walls}"
         )
 
-    def test_free_count_matches_grid(
-        self, sample_result, sample_grid: list[str]
-    ) -> None:
+    def test_free_count_matches_grid(self, sample_result, sample_grid: list[str]) -> None:
         expected_free = _count_char(sample_grid, ".") + _count_char(sample_grid, "S")
         assert sample_result.num_free == expected_free, (
             f"Expected {expected_free} free cells, got {sample_result.num_free}"
@@ -195,7 +188,7 @@ class TestMinimalLayout:
             result = builder.build(layout_path=path)
 
             assert result.num_walls == 8  # 8 '#' cells
-            assert result.num_free == 1   # 1 'S' cell
+            assert result.num_free == 1  # 1 'S' cell
             assert result.start_cell == (1, 1)
             assert result.num_rows == 3
             assert result.num_cols == 3

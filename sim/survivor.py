@@ -38,12 +38,10 @@ Programmatic::
 
 from __future__ import annotations
 
-import argparse
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pybullet as p
 
@@ -58,25 +56,25 @@ DEFAULT_ARENA_CONFIG = Path("configs/arena.yaml")
 
 # Skin / mannequin base colours (RGB floats 0-1).
 SKIN_COLORS = [
-    (0.96, 0.82, 0.71),   # Fair
-    (0.87, 0.72, 0.58),   # Light tan
-    (0.76, 0.60, 0.44),   # Medium
-    (0.55, 0.38, 0.25),   # Brown
-    (0.36, 0.24, 0.16),   # Dark brown
-    (0.70, 0.70, 0.70),   # Mannequin grey
-    (0.85, 0.82, 0.78),   # Mannequin beige
+    (0.96, 0.82, 0.71),  # Fair
+    (0.87, 0.72, 0.58),  # Light tan
+    (0.76, 0.60, 0.44),  # Medium
+    (0.55, 0.38, 0.25),  # Brown
+    (0.36, 0.24, 0.16),  # Dark brown
+    (0.70, 0.70, 0.70),  # Mannequin grey
+    (0.85, 0.82, 0.78),  # Mannequin beige
 ]
 
 # Default clothing palette (used if arena.yaml palette is missing/empty).
 DEFAULT_CLOTHING = [
-    (0.15, 0.25, 0.55),   # Navy
-    (0.70, 0.15, 0.15),   # Red
-    (0.20, 0.45, 0.25),   # Dark green
-    (0.25, 0.25, 0.25),   # Charcoal grey
-    (0.85, 0.80, 0.70),   # Light khaki
-    (0.40, 0.30, 0.22),   # Brown
-    (0.12, 0.12, 0.12),   # Near black
-    (0.90, 0.90, 0.88),   # Off white
+    (0.15, 0.25, 0.55),  # Navy
+    (0.70, 0.15, 0.15),  # Red
+    (0.20, 0.45, 0.25),  # Dark green
+    (0.25, 0.25, 0.25),  # Charcoal grey
+    (0.85, 0.80, 0.70),  # Light khaki
+    (0.40, 0.30, 0.22),  # Brown
+    (0.12, 0.12, 0.12),  # Near black
+    (0.90, 0.90, 0.88),  # Off white
 ]
 
 # Posture identifiers.
@@ -120,6 +118,7 @@ class SurvivorInfo:
 # Helpers — primitive body creation
 # --------------------------------------------------------------------------- #
 
+
 def _rgba(rgb: tuple[float, ...], a: float = 1.0) -> list[float]:
     """Convert an RGB tuple to an RGBA list."""
     return [rgb[0], rgb[1], rgb[2], a]
@@ -133,9 +132,7 @@ def _create_box(
     color_rgb: tuple[float, ...] = (0.5, 0.5, 0.5),
 ) -> int:
     """Create a static box body and return its PyBullet body ID."""
-    col = p.createCollisionShape(
-        p.GEOM_BOX, halfExtents=list(half_extents), physicsClientId=cid
-    )
+    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=list(half_extents), physicsClientId=cid)
     vis = p.createVisualShape(
         p.GEOM_BOX,
         halfExtents=list(half_extents),
@@ -163,9 +160,7 @@ def _create_capsule(
     color_rgb: tuple[float, ...] = (0.5, 0.5, 0.5),
 ) -> int:
     """Create a static capsule body (cylinder with hemispherical caps)."""
-    col = p.createCollisionShape(
-        p.GEOM_CAPSULE, radius=radius, height=height, physicsClientId=cid
-    )
+    col = p.createCollisionShape(p.GEOM_CAPSULE, radius=radius, height=height, physicsClientId=cid)
     vis = p.createVisualShape(
         p.GEOM_CAPSULE,
         radius=radius,
@@ -192,9 +187,7 @@ def _create_sphere(
     color_rgb: tuple[float, ...] = (0.5, 0.5, 0.5),
 ) -> int:
     """Create a static sphere body."""
-    col = p.createCollisionShape(
-        p.GEOM_SPHERE, radius=radius, physicsClientId=cid
-    )
+    col = p.createCollisionShape(p.GEOM_SPHERE, radius=radius, physicsClientId=cid)
     vis = p.createVisualShape(
         p.GEOM_SPHERE,
         radius=radius,
@@ -217,16 +210,12 @@ def _yaw_quaternion(yaw_rad: float) -> tuple[float, float, float, float]:
     return p.getQuaternionFromEuler([0, 0, yaw_rad])
 
 
-def _euler_quaternion(
-    roll: float, pitch: float, yaw: float
-) -> tuple[float, float, float, float]:
+def _euler_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
     """Quaternion from Euler angles (radians)."""
     return p.getQuaternionFromEuler([roll, pitch, yaw])
 
 
-def _rotate_xy(
-    dx: float, dy: float, yaw_rad: float
-) -> tuple[float, float]:
+def _rotate_xy(dx: float, dy: float, yaw_rad: float) -> tuple[float, float]:
     """Rotate (dx, dy) offset by *yaw_rad* around the z-axis."""
     c, s = math.cos(yaw_rad), math.sin(yaw_rad)
     return (dx * c - dy * s, dx * s + dy * c)
@@ -236,11 +225,15 @@ def _rotate_xy(
 # Posture builders — each returns a list of body IDs
 # --------------------------------------------------------------------------- #
 
+
 def _build_standing(
     cid: int,
-    cx: float, cy: float,
+    cx: float,
+    cy: float,
     yaw_rad: float,
-    h: float, sw: float, td: float,
+    h: float,
+    sw: float,
+    td: float,
     skin: tuple[float, ...],
     cloth: tuple[float, ...],
 ) -> list[int]:
@@ -265,48 +258,64 @@ def _build_standing(
     # Legs (two capsules, standing vertically).
     for side in (-1, 1):
         lx, ly = _rotate_xy(side * sw * 0.20, 0, yaw_rad)
-        ids.append(_create_capsule(
-            cid, leg_r, leg_len,
-            (cx + lx, cy + ly, leg_len / 2 + leg_r),
-            color_rgb=cloth,
-        ))
+        ids.append(
+            _create_capsule(
+                cid,
+                leg_r,
+                leg_len,
+                (cx + lx, cy + ly, leg_len / 2 + leg_r),
+                color_rgb=cloth,
+            )
+        )
 
     # Torso box.
     torso_z = leg_len + leg_r + torso_len / 2
-    ids.append(_create_box(
-        cid,
-        (sw / 2, td / 2, torso_len / 2),
-        (cx, cy, torso_z),
-        _yaw_quaternion(yaw_rad),
-        color_rgb=cloth,
-    ))
+    ids.append(
+        _create_box(
+            cid,
+            (sw / 2, td / 2, torso_len / 2),
+            (cx, cy, torso_z),
+            _yaw_quaternion(yaw_rad),
+            color_rgb=cloth,
+        )
+    )
 
     # Head sphere.
     head_z = torso_z + torso_len / 2 + head_r
-    ids.append(_create_sphere(
-        cid, head_r,
-        (cx, cy, head_z),
-        color_rgb=skin,
-    ))
+    ids.append(
+        _create_sphere(
+            cid,
+            head_r,
+            (cx, cy, head_z),
+            color_rgb=skin,
+        )
+    )
 
     # Arms (hanging at sides).
     shoulder_z = torso_z + torso_len / 2 - arm_r
     for side in (-1, 1):
         ax, ay = _rotate_xy(side * (sw / 2 + arm_r), 0, yaw_rad)
-        ids.append(_create_capsule(
-            cid, arm_r, arm_len,
-            (cx + ax, cy + ay, shoulder_z - arm_len / 2),
-            color_rgb=cloth,
-        ))
+        ids.append(
+            _create_capsule(
+                cid,
+                arm_r,
+                arm_len,
+                (cx + ax, cy + ay, shoulder_z - arm_len / 2),
+                color_rgb=cloth,
+            )
+        )
 
     return ids
 
 
 def _build_sitting(
     cid: int,
-    cx: float, cy: float,
+    cx: float,
+    cy: float,
     yaw_rad: float,
-    h: float, sw: float, td: float,
+    h: float,
+    sw: float,
+    td: float,
     skin: tuple[float, ...],
     cloth: tuple[float, ...],
 ) -> list[int]:
@@ -323,49 +332,65 @@ def _build_sitting(
     # Legs — horizontal capsules on floor.
     for side in (-1, 1):
         lx_off, ly_off = _rotate_xy(side * sw * 0.20, leg_len / 2, yaw_rad)
-        ids.append(_create_capsule(
-            cid, leg_r, leg_len,
-            (cx + lx_off, cy + ly_off, leg_r),
-            _euler_quaternion(0, math.pi / 2, yaw_rad),
-            color_rgb=cloth,
-        ))
+        ids.append(
+            _create_capsule(
+                cid,
+                leg_r,
+                leg_len,
+                (cx + lx_off, cy + ly_off, leg_r),
+                _euler_quaternion(0, math.pi / 2, yaw_rad),
+                color_rgb=cloth,
+            )
+        )
 
     # Torso — vertical box starting at floor.
     torso_z = torso_len / 2
-    ids.append(_create_box(
-        cid,
-        (sw / 2, td / 2, torso_len / 2),
-        (cx, cy, torso_z),
-        _yaw_quaternion(yaw_rad),
-        color_rgb=cloth,
-    ))
+    ids.append(
+        _create_box(
+            cid,
+            (sw / 2, td / 2, torso_len / 2),
+            (cx, cy, torso_z),
+            _yaw_quaternion(yaw_rad),
+            color_rgb=cloth,
+        )
+    )
 
     # Head.
     head_z = torso_z + torso_len / 2 + head_r
-    ids.append(_create_sphere(
-        cid, head_r,
-        (cx, cy, head_z),
-        color_rgb=skin,
-    ))
+    ids.append(
+        _create_sphere(
+            cid,
+            head_r,
+            (cx, cy, head_z),
+            color_rgb=skin,
+        )
+    )
 
     # Arms — resting on floor beside body.
     arm_z = arm_len / 2
     for side in (-1, 1):
         ax, ay = _rotate_xy(side * (sw / 2 + arm_r), 0, yaw_rad)
-        ids.append(_create_capsule(
-            cid, arm_r, arm_len,
-            (cx + ax, cy + ay, arm_z),
-            color_rgb=cloth,
-        ))
+        ids.append(
+            _create_capsule(
+                cid,
+                arm_r,
+                arm_len,
+                (cx + ax, cy + ay, arm_z),
+                color_rgb=cloth,
+            )
+        )
 
     return ids
 
 
 def _build_lying(
     cid: int,
-    cx: float, cy: float,
+    cx: float,
+    cy: float,
     yaw_rad: float,
-    h: float, sw: float, td: float,
+    h: float,
+    sw: float,
+    td: float,
     skin: tuple[float, ...],
     cloth: tuple[float, ...],
     face_roll: float = 0.0,
@@ -390,50 +415,68 @@ def _build_lying(
 
     # Torso — horizontal capsule.
     torso_orn = _euler_quaternion(face_roll, math.pi / 2, yaw_rad)
-    ids.append(_create_capsule(
-        cid, td / 2, torso_len,
-        (cx, cy, base_z),
-        torso_orn,
-        color_rgb=cloth,
-    ))
+    ids.append(
+        _create_capsule(
+            cid,
+            td / 2,
+            torso_len,
+            (cx, cy, base_z),
+            torso_orn,
+            color_rgb=cloth,
+        )
+    )
 
     # Legs — extend forward from torso along yaw.
     leg_dx, leg_dy = _rotate_xy(0, (torso_len / 2 + leg_len / 2), yaw_rad)
     for side in (-1, 1):
         sx, sy = _rotate_xy(side * sw * 0.15, 0, yaw_rad)
-        ids.append(_create_capsule(
-            cid, leg_r, leg_len,
-            (cx + leg_dx + sx, cy + leg_dy + sy, base_z),
-            _euler_quaternion(face_roll, math.pi / 2, yaw_rad),
-            color_rgb=cloth,
-        ))
+        ids.append(
+            _create_capsule(
+                cid,
+                leg_r,
+                leg_len,
+                (cx + leg_dx + sx, cy + leg_dy + sy, base_z),
+                _euler_quaternion(face_roll, math.pi / 2, yaw_rad),
+                color_rgb=cloth,
+            )
+        )
 
     # Head sphere — extends behind torso.
     hx, hy = _rotate_xy(0, -(torso_len / 2 + head_r), yaw_rad)
-    ids.append(_create_sphere(
-        cid, head_r,
-        (cx + hx, cy + hy, base_z),
-        color_rgb=skin,
-    ))
+    ids.append(
+        _create_sphere(
+            cid,
+            head_r,
+            (cx + hx, cy + hy, base_z),
+            color_rgb=skin,
+        )
+    )
 
     # Arms — beside torso.
     for side in (-1, 1):
         ax, ay = _rotate_xy(side * (sw / 2 + arm_r * 2), 0, yaw_rad)
-        ids.append(_create_capsule(
-            cid, arm_r, arm_len,
-            (cx + ax, cy + ay, base_z),
-            _euler_quaternion(face_roll, math.pi / 2, yaw_rad),
-            color_rgb=cloth,
-        ))
+        ids.append(
+            _create_capsule(
+                cid,
+                arm_r,
+                arm_len,
+                (cx + ax, cy + ay, base_z),
+                _euler_quaternion(face_roll, math.pi / 2, yaw_rad),
+                color_rgb=cloth,
+            )
+        )
 
     return ids
 
 
 def _build_curled(
     cid: int,
-    cx: float, cy: float,
+    cx: float,
+    cy: float,
     yaw_rad: float,
-    h: float, sw: float, td: float,
+    h: float,
+    sw: float,
+    td: float,
     skin: tuple[float, ...],
     cloth: tuple[float, ...],
 ) -> list[int]:
@@ -442,53 +485,67 @@ def _build_curled(
 
     torso_len = h * 0.25
     head_r = h * 0.07
-    leg_r = sw * 0.14
     body_r = max(sw, td) / 2
     base_z = body_r
 
     # Main torso — shorter, tucked.
-    ids.append(_create_capsule(
-        cid, td / 2, torso_len,
-        (cx, cy, base_z),
-        _euler_quaternion(math.pi / 6, math.pi / 2, yaw_rad),
-        color_rgb=cloth,
-    ))
+    ids.append(
+        _create_capsule(
+            cid,
+            td / 2,
+            torso_len,
+            (cx, cy, base_z),
+            _euler_quaternion(math.pi / 6, math.pi / 2, yaw_rad),
+            color_rgb=cloth,
+        )
+    )
 
     # Knees tucked up — a box representing folded legs.
     kx, ky = _rotate_xy(0, torso_len * 0.3, yaw_rad)
-    ids.append(_create_box(
-        cid,
-        (sw / 2, torso_len * 0.4, body_r * 0.6),
-        (cx + kx, cy + ky, base_z),
-        _euler_quaternion(0, 0, yaw_rad),
-        color_rgb=cloth,
-    ))
+    ids.append(
+        _create_box(
+            cid,
+            (sw / 2, torso_len * 0.4, body_r * 0.6),
+            (cx + kx, cy + ky, base_z),
+            _euler_quaternion(0, 0, yaw_rad),
+            color_rgb=cloth,
+        )
+    )
 
     # Head — tucked down at one end.
     hx, hy = _rotate_xy(0, -(torso_len * 0.5 + head_r * 0.5), yaw_rad)
-    ids.append(_create_sphere(
-        cid, head_r,
-        (cx + hx, cy + hy, base_z),
-        color_rgb=skin,
-    ))
+    ids.append(
+        _create_sphere(
+            cid,
+            head_r,
+            (cx + hx, cy + hy, base_z),
+            color_rgb=skin,
+        )
+    )
 
     return ids
 
 
 # Map posture name -> builder callable.
 _POSTURE_BUILDERS = {
-    "standing": lambda cid, cx, cy, yr, h, sw, td, sk, cl:
-        _build_standing(cid, cx, cy, yr, h, sw, td, sk, cl),
-    "sitting": lambda cid, cx, cy, yr, h, sw, td, sk, cl:
-        _build_sitting(cid, cx, cy, yr, h, sw, td, sk, cl),
-    "lying_supine": lambda cid, cx, cy, yr, h, sw, td, sk, cl:
-        _build_lying(cid, cx, cy, yr, h, sw, td, sk, cl, face_roll=0.0),
-    "lying_prone": lambda cid, cx, cy, yr, h, sw, td, sk, cl:
-        _build_lying(cid, cx, cy, yr, h, sw, td, sk, cl, face_roll=math.pi),
-    "lying_lateral": lambda cid, cx, cy, yr, h, sw, td, sk, cl:
-        _build_lying(cid, cx, cy, yr, h, sw, td, sk, cl, face_roll=math.pi / 2),
-    "curled": lambda cid, cx, cy, yr, h, sw, td, sk, cl:
-        _build_curled(cid, cx, cy, yr, h, sw, td, sk, cl),
+    "standing": lambda cid, cx, cy, yr, h, sw, td, sk, cl: _build_standing(
+        cid, cx, cy, yr, h, sw, td, sk, cl
+    ),
+    "sitting": lambda cid, cx, cy, yr, h, sw, td, sk, cl: _build_sitting(
+        cid, cx, cy, yr, h, sw, td, sk, cl
+    ),
+    "lying_supine": lambda cid, cx, cy, yr, h, sw, td, sk, cl: _build_lying(
+        cid, cx, cy, yr, h, sw, td, sk, cl, face_roll=0.0
+    ),
+    "lying_prone": lambda cid, cx, cy, yr, h, sw, td, sk, cl: _build_lying(
+        cid, cx, cy, yr, h, sw, td, sk, cl, face_roll=math.pi
+    ),
+    "lying_lateral": lambda cid, cx, cy, yr, h, sw, td, sk, cl: _build_lying(
+        cid, cx, cy, yr, h, sw, td, sk, cl, face_roll=math.pi / 2
+    ),
+    "curled": lambda cid, cx, cy, yr, h, sw, td, sk, cl: _build_curled(
+        cid, cx, cy, yr, h, sw, td, sk, cl
+    ),
 }
 
 
@@ -619,14 +676,16 @@ class SurvivorPlacer:
             builder_fn = _POSTURE_BUILDERS[posture]
             body_ids = builder_fn(cid, cx, cy, yaw_rad, h, sw, td, skin, cloth)
 
-            survivors.append(SurvivorInfo(
-                body_ids=body_ids,
-                posture=posture,
-                cell=cell,
-                world_pos=(cx, cy, 0.0),
-                yaw_deg=yaw_deg,
-                scale=scale,
-            ))
+            survivors.append(
+                SurvivorInfo(
+                    body_ids=body_ids,
+                    posture=posture,
+                    cell=cell,
+                    world_pos=(cx, cy, 0.0),
+                    yaw_deg=yaw_deg,
+                    scale=scale,
+                )
+            )
 
         return survivors
 
@@ -635,9 +694,7 @@ class SurvivorPlacer:
         for bid in survivor.body_ids:
             p.removeBody(bid, physicsClientId=cid)
 
-    def remove_all(
-        self, survivors: list[SurvivorInfo], cid: int
-    ) -> None:
+    def remove_all(self, survivors: list[SurvivorInfo], cid: int) -> None:
         """Remove all survivors from the simulation."""
         for s in survivors:
             self.remove(s, cid)
@@ -671,12 +728,14 @@ def _main() -> None:
         survivors = placer.place(maze, seed=seed)
         print(f"\nSeed {seed}: placed {len(survivors)} survivors")
         for i, s in enumerate(survivors):
-            print(textwrap.indent(
-                f"#{i}: posture={s.posture}, cell={s.cell}, "
-                f"yaw={s.yaw_deg:.1f}°, scale={s.scale:.2f}, "
-                f"parts={len(s.body_ids)}",
-                "  ",
-            ))
+            print(
+                textwrap.indent(
+                    f"#{i}: posture={s.posture}, cell={s.cell}, "
+                    f"yaw={s.yaw_deg:.1f}°, scale={s.scale:.2f}, "
+                    f"parts={len(s.body_ids)}",
+                    "  ",
+                )
+            )
         # Clean up.
         placer.remove_all(survivors, maze.physics_client)
 
@@ -687,7 +746,7 @@ def _main() -> None:
     placer.remove_all(s2, maze.physics_client)
 
     assert len(s1) == len(s2), "Determinism check failed: different counts"
-    for a, b in zip(s1, s2):
+    for a, b in zip(s1, s2, strict=True):
         assert a.posture == b.posture, f"Posture mismatch: {a.posture} vs {b.posture}"
         assert a.cell == b.cell, f"Cell mismatch: {a.cell} vs {b.cell}"
         assert abs(a.yaw_deg - b.yaw_deg) < 1e-9, "Yaw mismatch"

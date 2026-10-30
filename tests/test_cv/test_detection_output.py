@@ -32,9 +32,7 @@ SAMPLE_JSONL = (
     ' "bbox_center": [697.5, 584.6]}]}'
 )
 
-TIMESTAMP_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
-)
+TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 REQUIRED_FRAME_KEYS = {
     "frame_id",
@@ -118,9 +116,7 @@ class TestDetectionFields:
             f"bbox_xyxy must be a list of 4 elements, got {bbox}"
         )
         for v in bbox:
-            assert isinstance(v, (int, float)), (
-                f"bbox_xyxy values must be numeric, got {type(v)}"
-            )
+            assert isinstance(v, (int, float)), f"bbox_xyxy values must be numeric, got {type(v)}"
 
     def test_bbox_xyxy_ordering(self, det: dict) -> None:
         x1, y1, x2, y2 = det["bbox_xyxy"]
@@ -133,9 +129,7 @@ class TestDetectionFields:
             f"bbox_center must be a list of 2 elements, got {center}"
         )
         for v in center:
-            assert isinstance(v, (int, float)), (
-                f"bbox_center values must be numeric, got {type(v)}"
-            )
+            assert isinstance(v, (int, float)), f"bbox_center values must be numeric, got {type(v)}"
 
     def test_bbox_center_matches_xyxy(self, det: dict) -> None:
         """Center should be the midpoint of the xyxy box."""
@@ -184,9 +178,7 @@ class TestLiveOutput:
     def test_all_detections_have_class_id(self, live_records: list[dict]) -> None:
         for i, rec in enumerate(live_records):
             for j, det in enumerate(rec["detections"]):
-                assert "class_id" in det, (
-                    f"Record {i}, detection {j}: missing class_id"
-                )
+                assert "class_id" in det, f"Record {i}, detection {j}: missing class_id"
 
     def test_all_bboxes_are_float(self, live_records: list[dict]) -> None:
         for i, rec in enumerate(live_records):

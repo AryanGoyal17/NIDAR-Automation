@@ -113,7 +113,7 @@ def main() -> int:
         if dest.exists() and not args.force:
             size = dest.stat().st_size
             sha = compute_sha256(dest)
-            print(f"  Status : EXISTS (skipping download)")
+            print("  Status : EXISTS (skipping download)")
             print(f"  Path   : {dest}")
             print(f"  Size   : {format_size(size)}")
             print(f"  SHA256 : {sha}")
@@ -125,7 +125,7 @@ def main() -> int:
             download_file(url, dest)
             size = dest.stat().st_size
             sha = compute_sha256(dest)
-            print(f"  Status : DOWNLOADED")
+            print("  Status : DOWNLOADED")
             print(f"  Path   : {dest}")
             print(f"  Size   : {format_size(size)}")
             print(f"  SHA256 : {sha}")

@@ -161,8 +161,7 @@ def load_layout(layout_path: str | Path) -> list[str]:
         for ch in row:
             if ch not in valid_chars:
                 raise ValueError(
-                    f"Invalid character '{ch}' at row {i} in {path}. "
-                    f"Valid: {valid_chars}"
+                    f"Invalid character '{ch}' at row {i} in {path}. Valid: {valid_chars}"
                 )
         # Pad short rows with wall characters (safe boundary)
         grid.append(row.ljust(max_width, WALL_CHAR))

@@ -86,7 +86,9 @@ class TestProceduralTextures:
         assert tex.std() > 5.0
 
     def test_checker_texture_pattern(self, tex_gen: ProceduralTextureGenerator) -> None:
-        tex = tex_gen.generate_checker(64, 64, grid_size=4, color1_bgr=(0, 0, 0), color2_bgr=(255, 255, 255))
+        tex = tex_gen.generate_checker(
+            64, 64, grid_size=4, color1_bgr=(0, 0, 0), color2_bgr=(255, 255, 255)
+        )
         assert tex.shape == (64, 64, 3)
         assert tex.dtype == np.uint8
         # Top-left cell should be color1 (0), adjacent should be color2 (255)

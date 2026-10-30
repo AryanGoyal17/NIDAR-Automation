@@ -40,10 +40,10 @@ Programmatic::
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import math
-from pathlib import Path
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
@@ -138,16 +138,10 @@ class PinholeCamera:
         self.width: int = width if width is not None else int(cam_cfg.resolution.width)
         self.height: int = height if height is not None else int(cam_cfg.resolution.height)
         self.vertical_fov_deg: float = (
-            vertical_fov_deg
-            if vertical_fov_deg is not None
-            else float(cam_cfg.fov.vertical_deg)
+            vertical_fov_deg if vertical_fov_deg is not None else float(cam_cfg.fov.vertical_deg)
         )
-        self.near_clip: float = (
-            near_clip if near_clip is not None else float(cam_cfg.near_clip)
-        )
-        self.far_clip: float = (
-            far_clip if far_clip is not None else float(cam_cfg.far_clip)
-        )
+        self.near_clip: float = near_clip if near_clip is not None else float(cam_cfg.near_clip)
+        self.far_clip: float = far_clip if far_clip is not None else float(cam_cfg.far_clip)
         self.default_tilt_deg: float = float(cam_cfg.tilt_deg)
         self.default_height: float = float(cam_cfg.height)
         self.renderer: int = renderer
@@ -156,8 +150,12 @@ class PinholeCamera:
         light_cfg = getattr(cfg, "lighting", None)
         if light_cfg is not None:
             self.ambient_coeff: float = float(np.mean(light_cfg.ambient_rgb))
-            self.directional_color: list[float] = [float(c) for c in light_cfg.directional_color_rgb]
-            self.directional_direction: list[float] = [float(d) for d in light_cfg.directional_direction]
+            self.directional_color: list[float] = [
+                float(c) for c in light_cfg.directional_color_rgb
+            ]
+            self.directional_direction: list[float] = [
+                float(d) for d in light_cfg.directional_direction
+            ]
             self.cast_shadows: bool = bool(light_cfg.cast_shadows)
         else:
             self.ambient_coeff = 0.35
@@ -287,11 +285,7 @@ class PinholeCamera:
         """
         view_mat = self.compute_view_matrix(pose)
 
-        use_shadow = (
-            int(bool(shadow))
-            if shadow is not None
-            else (1 if self.cast_shadows else 0)
-        )
+        use_shadow = int(bool(shadow)) if shadow is not None else (1 if self.cast_shadows else 0)
 
         kwargs = {
             "width": self.width,
@@ -300,7 +294,9 @@ class PinholeCamera:
             "projectionMatrix": self.projection_matrix,
             "renderer": self.renderer,
             "flags": p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
-            "lightDirection": light_direction if light_direction is not None else self.directional_direction,
+            "lightDirection": light_direction
+            if light_direction is not None
+            else self.directional_direction,
             "lightColor": light_color if light_color is not None else self.directional_color,
             "lightAmbientCoeff": ambient_coeff if ambient_coeff is not None else self.ambient_coeff,
             "lightDiffuseCoeff": diffuse_coeff if diffuse_coeff is not None else 0.65,
@@ -372,7 +368,9 @@ class PinholeCamera:
         ms_per_frame = (t_elapsed / num_frames) * 1000.0
 
         print(f"  Resolution  : {self.width} × {self.height}")
-        print(f"  Renderer    : {'CPU TinyRenderer' if self.renderer == p.ER_TINY_RENDERER else 'OpenGL'}")
+        print(
+            f"  Renderer    : {'CPU TinyRenderer' if self.renderer == p.ER_TINY_RENDERER else 'OpenGL'}"
+        )
         print(f"  Frames      : {num_frames}")
         print(f"  Total time  : {t_elapsed:.3f} s")
         print(f"  Throughput  : {fps:.2f} FPS ({ms_per_frame:.2f} ms/frame)")
@@ -386,8 +384,12 @@ class PinholeCamera:
 def main() -> None:
     parser = argparse.ArgumentParser(description="NIDAR Camera Benchmark & Test")
     parser.add_argument("--frames", type=int, default=30, help="Frames to benchmark")
-    parser.add_argument("--width", type=int, default=None, help="Image width (default: from arena.yaml)")
-    parser.add_argument("--height", type=int, default=None, help="Image height (default: from arena.yaml)")
+    parser.add_argument(
+        "--width", type=int, default=None, help="Image width (default: from arena.yaml)"
+    )
+    parser.add_argument(
+        "--height", type=int, default=None, help="Image height (default: from arena.yaml)"
+    )
     parser.add_argument(
         "--arena",
         type=str,
@@ -417,7 +419,7 @@ def main() -> None:
         # Test single render output properties
         test_pose = CameraPose(x=2.0, y=2.0, z=0.8, yaw=45.0, pitch=-30.0, roll=0.0)
         out = camera.render(test_pose, physics_client=cid)
-        print(f"  Render verification:")
+        print("  Render verification:")
         print(f"    BGR shape     : {out.bgr.shape}, dtype={out.bgr.dtype}")
         print(f"    Depth shape   : {out.depth.shape}, dtype={out.depth.dtype}")
         print(f"    Seg mask shape: {out.seg_mask.shape}, dtype={out.seg_mask.dtype}")

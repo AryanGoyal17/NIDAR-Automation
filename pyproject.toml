@@ -1,7 +1,7 @@
 [project]
 name = "nidar"
 version = "0.1.0"
-description = "Autonomous Drone AI/CV and Ground Control Station for NIDAR AirMouse 2026-27"
+description = "Human (survivor) detection for the NIDAR AirMouse 2026-27 drone"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -55,6 +55,10 @@ ignore = [
     "E501",  # Line length handled by formatter
     "B008",  # Do not perform function call in argument defaults
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path manipulation before imports is intentional in standalone scripts
+"scripts/sim_preview.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["cv", "interfaces"]

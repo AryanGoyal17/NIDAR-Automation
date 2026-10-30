@@ -40,9 +40,7 @@ class TestMazeGeneratorDeterminism:
         assert layout_a.num_cols == layout_b.num_cols
         assert layout_a.bounds_m == layout_b.bounds_m
 
-    def test_different_seeds_give_different_layouts(
-        self, generator: MazeGenerator
-    ) -> None:
+    def test_different_seeds_give_different_layouts(self, generator: MazeGenerator) -> None:
         layout_a = generator.generate(rows=13, cols=13, seed=101)
         layout_b = generator.generate(rows=13, cols=13, seed=202)
         assert layout_a.grid != layout_b.grid
@@ -60,9 +58,7 @@ class TestMazeGeneratorProperties:
         assert len(layout.grid) == 11
         assert all(len(row) == 15 for row in layout.grid)
 
-    def test_even_dimensions_are_promoted_to_odd(
-        self, generator: MazeGenerator
-    ) -> None:
+    def test_even_dimensions_are_promoted_to_odd(self, generator: MazeGenerator) -> None:
         layout = generator.generate(rows=10, cols=12, seed=42)
         assert layout.num_rows == 11
         assert layout.num_cols == 13

@@ -79,7 +79,7 @@ class TestSequenceGeneration:
             p1 = seq[i + 1]
             dist_xy = math.hypot(p1.x - p0.x, p1.y - p0.y)
             assert dist_xy < (step * 2.5), (
-                f"Consecutive frame gap too large: {dist_xy:.3f}m between frame {i} and {i+1}"
+                f"Consecutive frame gap too large: {dist_xy:.3f}m between frame {i} and {i + 1}"
             )
             # Yaw difference should be smooth
             yaw_diff = abs((p1.yaw - p0.yaw + 180.0) % 360.0 - 180.0)

@@ -50,10 +50,10 @@ Programmatic::
 
 from __future__ import annotations
 
-import argparse
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -72,6 +72,7 @@ DEFAULT_CLASS_NAME: str = "person"
 # --------------------------------------------------------------------------- #
 # Mask decoding
 # --------------------------------------------------------------------------- #
+
 
 def decode_object_id(pixel_val: int) -> int:
     """
@@ -117,6 +118,7 @@ def decode_segmentation_mask(mask: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # Data structures
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class SurvivorLabel:
@@ -193,6 +195,7 @@ class SurvivorLabel:
 # --------------------------------------------------------------------------- #
 # Bounding box computation from segmentation mask
 # --------------------------------------------------------------------------- #
+
 
 def compute_box_for_body_ids(
     decoded_mask: np.ndarray,
@@ -307,9 +310,7 @@ def compute_box_for_body_ids(
 
     # If unclipped_bbox wasn't provided, detect if visible pixels touch border
     if unclipped_bbox is None:
-        touches_border = (
-            xs.min() == 0 or xs.max() >= w - 1 or ys.min() == 0 or ys.max() >= h - 1
-        )
+        touches_border = xs.min() == 0 or xs.max() >= w - 1 or ys.min() == 0 or ys.max() >= h - 1
         if touches_border and total_expected_pixels is not None and total_expected_pixels > 0:
             missing_frac = max(0.0, 1.0 - visible_pixels / total_expected_pixels)
             # Portion of missing pixels attributed to boundary cutoff
@@ -434,6 +435,7 @@ def compute_survivor_labels(
 # File I/O
 # --------------------------------------------------------------------------- #
 
+
 def save_yolo_labels(
     labels: Sequence[SurvivorLabel],
     output_path: str | Path,
@@ -500,6 +502,7 @@ def load_yolo_labels(label_path: str | Path) -> list[tuple[int, float, float, fl
 # CLI Smoke Test
 # --------------------------------------------------------------------------- #
 
+
 def _main() -> None:
     """Standalone smoke test demonstrating decoding and YOLO label calculation."""
     print("=== sim.labels Smoke Test ===\n")
@@ -532,7 +535,7 @@ def _main() -> None:
     )
     assert len(labels) == 1, f"Expected 1 label, got {len(labels)}"
     lbl = labels[0]
-    print(f"   Survivor label created:")
+    print("   Survivor label created:")
     print(f"   - Bounding box (pixels): {lbl.bbox_xyxy}")
     print(f"   - YOLO normalised: {lbl.yolo_bbox}")
     print(f"   - YOLO text line: '{lbl.to_yolo_line()}'")

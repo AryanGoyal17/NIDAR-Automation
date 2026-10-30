@@ -31,9 +31,9 @@ Programmatic::
 from __future__ import annotations
 
 import argparse
+import random
 from dataclasses import dataclass
 from pathlib import Path
-import random
 from typing import Any
 
 import yaml
@@ -149,8 +149,8 @@ class MazeGenerator:
         # Cardinal moves: 2 steps in grid (jump over intermediate wall)
         directions = [
             (-2, 0),  # North
-            (2, 0),   # South
-            (0, 2),   # East
+            (2, 0),  # South
+            (0, 2),  # East
             (0, -2),  # West
         ]
 

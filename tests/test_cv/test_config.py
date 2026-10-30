@@ -109,4 +109,3 @@ def test_load_arena_config():
     assert cfg.survivor.dimensions.height_m > 0
     assert isinstance(cfg.survivor.postures, list)
     assert len(cfg.survivor.postures) > 0
-

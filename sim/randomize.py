@@ -44,11 +44,11 @@ Programmatic::
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import math
-from pathlib import Path
 import random
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -228,9 +228,7 @@ class ProceduralTextureGenerator:
         if rng_np is None:
             rng_np = np.random.default_rng()
 
-        enabled_types = self.tex_cfg.get(
-            "enabled_types", ["solid", "noise", "checker", "brick"]
-        )
+        enabled_types = self.tex_cfg.get("enabled_types", ["solid", "noise", "checker", "brick"])
         chosen_type = forced_tex_type if forced_tex_type else rng_py.choice(enabled_types)
 
         h, w = self.tex_height, self.tex_width
@@ -482,17 +480,13 @@ class FrameAugmentor:
     @staticmethod
     def apply_contrast(img: np.ndarray, factor: float) -> np.ndarray:
         """Multiplicative contrast adjustment centered around 128."""
-        return np.clip(128.0 + factor * (img.astype(np.float32) - 128.0), 0, 255).astype(
-            np.uint8
-        )
+        return np.clip(128.0 + factor * (img.astype(np.float32) - 128.0), 0, 255).astype(np.uint8)
 
     @staticmethod
     def apply_gamma(img: np.ndarray, gamma: float) -> np.ndarray:
         """Power-law gamma correction curve."""
         inv_gamma = 1.0 / max(gamma, 1e-4)
-        lut = np.array([((i / 255.0) ** inv_gamma) * 255.0 for i in range(256)]).astype(
-            np.uint8
-        )
+        lut = np.array([((i / 255.0) ** inv_gamma) * 255.0 for i in range(256)]).astype(np.uint8)
         return cv2.LUT(img, lut)
 
     @staticmethod
@@ -729,8 +723,12 @@ def main() -> None:
     print("Sampled Sequence Environmental Parameters:")
     print(f"  Wall texture  : {params.wall_texture_type}")
     print(f"  Floor texture : {params.floor_texture_type}")
-    print(f"  Light vector  : [{params.light_direction[0]:.2f}, {params.light_direction[1]:.2f}, {params.light_direction[2]:.2f}]")
-    print(f"  Light color   : [{params.light_color[0]:.2f}, {params.light_color[1]:.2f}, {params.light_color[2]:.2f}]")
+    print(
+        f"  Light vector  : [{params.light_direction[0]:.2f}, {params.light_direction[1]:.2f}, {params.light_direction[2]:.2f}]"
+    )
+    print(
+        f"  Light color   : [{params.light_color[0]:.2f}, {params.light_color[1]:.2f}, {params.light_color[2]:.2f}]"
+    )
     print(f"  Ambient coeff : {params.ambient_coeff:.2f}")
     print(f"  Diffuse coeff : {params.diffuse_coeff:.2f}")
     print(f"  Cast shadows  : {params.shadow}")
@@ -747,13 +745,17 @@ def main() -> None:
     rng_np = np.random.default_rng(args.seed)
 
     for t_type in ["solid", "noise", "checker", "brick"]:
-        _, img = tex_gen.sample_surface_texture("wall", forced_tex_type=t_type, rng_py=rng_py, rng_np=rng_np)
+        _, img = tex_gen.sample_surface_texture(
+            "wall", forced_tex_type=t_type, rng_py=rng_py, rng_np=rng_np
+        )
         cv2.imwrite(str(out_dir / f"texture_{t_type}.png"), img)
     print(f"Saved all 4 texture types to {out_dir}/texture_*.png")
 
     # 3. Test Frame Augmentations on a baseline image
     test_img = np.full((270, 480, 3), 128, dtype=np.uint8)
-    cv2.putText(test_img, "NIDAR TEST", (140, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (240, 240, 240), 2)
+    cv2.putText(
+        test_img, "NIDAR TEST", (140, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (240, 240, 240), 2
+    )
 
     augmentor = FrameAugmentor(config_path=args.config)
     aug_day = augmentor.augment(test_img, is_low_light=False, seed=args.seed)
