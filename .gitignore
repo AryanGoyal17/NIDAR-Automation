@@ -44,12 +44,14 @@ models/*
 *.engine
 *.tflite
 *.weights
+*_ncnn_model/
 
 # Datasets, Sample Media, and Raw Video Recordings
-data/samples/*
-!data/samples/.gitkeep
-data/test_videos/*
-!data/test_videos/.gitkeep
+# Ignore everything under data/ except .gitkeep files and data/README.md
+data/**
+!data/**/
+!data/**/.gitkeep
+!data/README.md
 data/raw/
 datasets/
 runs/
@@ -63,10 +65,9 @@ outputs/*
 !outputs/.gitkeep
 *.log
 
-# Web & GCS Artifacts
+# Web artifacts
 node_modules/
 dist/
-gcs/frontend/dist/
 .eslintcache
 
 # Editor & OS metadata

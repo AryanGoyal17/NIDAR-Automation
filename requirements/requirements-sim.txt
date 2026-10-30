@@ -1,0 +1,3 @@
+# Simulation dependencies (PyBullet maze generation and procedural survivor rendering)
+# Note: PyBullet has no prebuilt wheel for Python 3.12 on some platforms and may compile from source.
+pybullet>=3.2.5

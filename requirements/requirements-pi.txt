@@ -1,0 +1,18 @@
+# Raspberry Pi (CPU-only) deployment dependencies for NCNN inference
+# Target: Raspberry Pi 5 (8 GB, 64-bit OS, active cooling), CPU only
+
+# Core runtime & config validation
+numpy>=1.26.0,<2.0.0
+pydantic>=2.7.0
+pyyaml>=6.0
+
+# Computer vision runtime
+# TBD: Headless OpenCV is recommended for onboard deployment without display
+opencv-python-headless>=4.8.0  # TBD: verify if desktop OpenCV is preferred for preview
+
+# Ultralytics framework (NCNN model loading and post-processing)
+ultralytics>=8.4.0
+
+# NCNN neural network inference engine
+# TBD: Verify prebuilt arm64 wheel on Raspberry Pi OS Bookworm or build from source
+ncnn>=1.0.20240410  # TBD: verify exact NCNN version and wheels on Pi 5
