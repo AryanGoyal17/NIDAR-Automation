@@ -7,6 +7,8 @@
 | **Status**  | Accepted                                                       |
 | **Scope**   | Detection model architecture and onboard deployment candidates |
 
+> **Superseded in part by [ADR 006](006_pi_rgbd_hardware.md) (2026-10-30):** §1 (onboard candidates) and §5 (Jetson export path) are replaced; the onboard computer is a Raspberry Pi with an NCNN export. The model choice in this ADR is unchanged.
+
 ---
 
 ## 1. Context

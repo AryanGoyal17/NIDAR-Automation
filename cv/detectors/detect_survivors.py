@@ -5,7 +5,7 @@ NIDAR AirMouse - Baseline survivor (person) detector
 
 Runs a pretrained YOLO model on an image, a folder of images, a video file,
 or a webcam, and writes the detections in a fixed format that the rest of the
-system (survivor localisation, GCS) can consume.
+system (survivor mapping and tagging) can consume.
 
 By default, loads tuneable settings from configs/default.yaml. Command-line
 arguments override config values.

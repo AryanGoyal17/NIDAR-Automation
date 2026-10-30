@@ -30,9 +30,9 @@ class UTCFormatter(logging.Formatter):
     Custom formatter that outputs timestamps in ISO 8601 UTC format.
 
     Why UTC instead of local time?
-    During the competition, your drone's companion computer (Linux) and
-    your ground station laptop (Windows) might have different timezone
-    settings. UTC removes all ambiguity. When the autonomy lead's SLAM
+    During the competition, the drone's onboard computer and the other
+    subsystems' machines might have different timezone settings. UTC
+    removes all ambiguity. When the autonomy lead's SLAM
     log says an event happened at 14:32:01Z and your detection log says
     a survivor was found at 14:32:01Z, you know they are the same instant.
     """
@@ -56,7 +56,7 @@ def get_logger(
     Create or retrieve a named logger with console and optional file output.
 
     Args:
-        name:     Logger name (e.g. "detector", "gcs", "config").
+        name:     Logger name (e.g. "detector", "tracker", "config").
                   Use short, lowercase names. Each module should have its own.
         level:    Minimum log level: DEBUG, INFO, WARNING, ERROR, CRITICAL.
         log_file: Path for the log file. Set to None for console-only output.

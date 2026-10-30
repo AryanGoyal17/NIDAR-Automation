@@ -93,7 +93,7 @@ to draw rectangles with OpenCV's `cv2.rectangle((x1,y1), (x2,y2), ...)`.
 | Property | Value | Reason |
 |---|---|---|
 | Format | ISO 8601 with UTC timezone | `2026-10-03T14:32:01.123Z` |
-| Timezone | Always UTC (suffix `Z`) | The drone (Linux) and ground station (Windows) may have different local clocks. UTC removes ambiguity. |
+| Timezone | Always UTC (suffix `Z`) | The onboard computer and the development or integration machines may have different local clocks. UTC removes ambiguity. |
 | Precision | Milliseconds (3 decimal places) | Sufficient for correlating detection events with pose/SLAM data at typical frame rates (10-60 FPS). |
 
 **In Python:**

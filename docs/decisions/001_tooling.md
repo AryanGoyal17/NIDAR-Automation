@@ -7,6 +7,8 @@
 | **Status**  | Accepted                 |
 | **Scope**   | CV pipeline              |
 
+> **Superseded in part by [ADR 006](006_pi_rgbd_hardware.md) (2026-10-30):** the onboard computer is a Raspberry Pi (CPU only, NCNN export); the Jetson / TensorRT deployment notes below no longer apply.
+
 ## Context
 
 The NIDAR AirMouse project requires a fully offline CV pipeline (survivor detection).
