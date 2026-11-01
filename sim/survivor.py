@@ -23,7 +23,8 @@ Each survivor is randomly:
 
 The module returns a list of :class:`SurvivorInfo` records containing the
 PyBullet body IDs so that post-render code can map segmentation-mask IDs
-back to individual survivors.
+back to individual survivors, and each survivor's real 3D axis-aligned box
+(``aabb``) so that camera samplers can keep their distance from it.
 
 Usage (CLI smoke test)::
 
@@ -49,6 +50,9 @@ from cv.config import load_config
 from sim.maze import FREE_CHARS, MazeBuilder, MazeResult
 
 DEFAULT_ARENA_CONFIG = Path("configs/arena.yaml")
+
+AABB = tuple[tuple[float, float, float], tuple[float, float, float]]
+"""Axis-aligned box ((min_x, min_y, min_z), (max_x, max_y, max_z)) in metres."""
 
 # --------------------------------------------------------------------------- #
 # Colour palettes
@@ -112,6 +116,9 @@ class SurvivorInfo:
 
     scale: float
     """Multiplicative scale factor applied to nominal dimensions."""
+
+    aabb: AABB
+    """World-frame box enclosing every body part, as built (posture, yaw, scale)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -213,6 +220,21 @@ def _yaw_quaternion(yaw_rad: float) -> tuple[float, float, float, float]:
 def _euler_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
     """Quaternion from Euler angles (radians)."""
     return p.getQuaternionFromEuler([roll, pitch, yaw])
+
+
+def survivor_aabb(body_ids: list[int], cid: int) -> AABB:
+    """Union of the PyBullet AABBs of a survivor's body parts.
+
+    The parts have collision shapes equal to their visual shapes, so this is
+    the box of the geometry as built, for any posture (a lying survivor gets
+    a low, wide box, not a standing-person box).
+    """
+    if not body_ids:
+        raise ValueError("survivor has no body parts")
+    boxes = [p.getAABB(bid, physicsClientId=cid) for bid in body_ids]
+    lo = tuple(float(min(b[0][i] for b in boxes)) for i in range(3))
+    hi = tuple(float(max(b[1][i] for b in boxes)) for i in range(3))
+    return (lo, hi)  # type: ignore[return-value]
 
 
 def _rotate_xy(dx: float, dy: float, yaw_rad: float) -> tuple[float, float]:
@@ -684,6 +706,7 @@ class SurvivorPlacer:
                     world_pos=(cx, cy, 0.0),
                     yaw_deg=yaw_deg,
                     scale=scale,
+                    aabb=survivor_aabb(body_ids, cid),
                 )
             )
 

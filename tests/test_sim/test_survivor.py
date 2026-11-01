@@ -10,6 +10,7 @@ Validates:
 5. Placement validity — survivors land on free cells only, never on the start cell.
 6. Body ID return — every placed survivor has body IDs.
 7. Removal — remove_all clears all bodies without error.
+8. 3D box — ``aabb`` encloses every body part and follows the posture.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from sim.survivor import (
     _POSTURE_BUILDERS,
     POSTURES,
     SurvivorPlacer,
+    survivor_aabb,
 )
 
 # Shared inline grid for testing.
@@ -209,6 +211,48 @@ class TestBodyIDs:
         for s in survivors:
             assert len(s.body_ids) > 0
         placer.remove_all(survivors, maze.physics_client)
+
+
+# --------------------------------------------------------------------------- #
+# 3D box
+# --------------------------------------------------------------------------- #
+class TestAABB:
+    """``aabb`` is the real box of the built parts, never a standing default."""
+
+    def test_aabb_encloses_every_part(self, maze: MazeResult, placer: SurvivorPlacer) -> None:
+        cid = maze.physics_client
+        for seed in range(20):
+            survivors = placer.place(maze, n=3, seed=seed)
+            for s in survivors:
+                lo, hi = s.aabb
+                for bid in s.body_ids:
+                    plo, phi = p.getAABB(bid, physicsClientId=cid)
+                    for i in range(3):
+                        assert lo[i] <= plo[i] and phi[i] <= hi[i]
+            placer.remove_all(survivors, cid)
+
+    @pytest.mark.parametrize("posture", POSTURES)
+    def test_aabb_follows_posture(self, maze: MazeResult, posture: str) -> None:
+        cid = maze.physics_client
+        h = 1.75
+        ids = _POSTURE_BUILDERS[posture](
+            cid, 3.0, 3.0, 0.3, h, 0.45, 0.25, (0.8, 0.7, 0.6), (0.3, 0.3, 0.3)
+        )
+        try:
+            lo, hi = survivor_aabb(ids, cid)
+            if posture == "standing":
+                assert hi[2] > 0.9 * h
+            else:
+                # Sitting, lying and curled bodies are far below standing height.
+                assert hi[2] < 0.5 * h + 0.01, f"{posture} top {hi[2]:.2f} m"
+            assert lo[0] < 3.0 < hi[0] and lo[1] < 3.0 < hi[1]
+        finally:
+            for bid in ids:
+                p.removeBody(bid, physicsClientId=cid)
+
+    def test_aabb_requires_parts(self, maze: MazeResult) -> None:
+        with pytest.raises(ValueError):
+            survivor_aabb([], maze.physics_client)
 
 
 # --------------------------------------------------------------------------- #

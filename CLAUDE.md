@@ -91,6 +91,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 
 **Only on the unmerged branch `fix/trajectory-v2` (redo of `0483528`, built from `main`), not on `main`:**
 - Survivors never placed on the start cell (`SurvivorPlacer.place`; 22 of 160 test scenes on `main`, 0 on the branch). Tested in `TestPlacement`.
+- `SurvivorInfo.aabb`: each survivor's real 3D box (union of its parts' PyBullet AABBs, any posture). Tested in `TestAABB`.
 
 **Known open defects on `main`:**
 - Camera inside survivors: no survivor clearance check, and survivors can sit on the start cell (22 of 160 test scenes). The start-cell part is fixed on `fix/trajectory-v2`.
