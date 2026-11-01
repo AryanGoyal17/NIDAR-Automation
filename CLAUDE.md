@@ -75,13 +75,13 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 - `randomize.py`: textures, lighting and frame augmentation.
 - `labels.py`: YOLO labels from segmentation masks.
 - `scripts/sim_preview.py`, `configs/arena.yaml`, `configs/randomization.yaml`.
-- pytest, 1 Nov 2026: 125 passed (branch `fix/floor-brightness`; `main` before it: 120). Branch `fix/trajectory-v2`: 160 passed and 11 skipped by default; the 11 are the heavy scene checks, run with `NIDAR_SCENE_TESTS=1` (11 passed).
+- pytest, 1 Nov 2026 (branch `chore/check-full`, commit `5164606`: `main` plus test-only changes, same test count): 160 passed and 11 skipped by default; the 11 are the heavy scene checks, run with `NIDAR_SCENE_TESTS=1` (171 passed).
 
 Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 Oct) and `outputs/scratch/fix_status_report.md` (1 Nov), gitignored, only on the owner's machine.
 
 **Fixed on `main`:**
 - Light direction: `arena.yaml` and the randomiser now put the light above the floor (untextured floor grey 112, was 39). The specular coefficient now reaches the renderer.
-- Lint: ruff check 0 errors, ruff format 0 unformatted (46 files, measured 1 Nov 2026 on `main`). Enforced by the pre-commit hook (ruff 0.16.10, run `pre-commit install` once per clone) and `scripts/check.ps1`.
+- Lint: ruff check 0 errors, ruff format 0 unformatted (47 files, measured 1 Nov 2026 on branch `chore/check-full`). Enforced by the pre-commit hook (ruff 0.16.10, run `pre-commit install` once per clone) and `scripts/check.ps1`.
 - Textured surfaces darkened by the body colour: `apply_to_sim` now resets the floor and wall `rgbaColor` to white, so the texture alone sets the albedo (it was multiplied by 0.45 on the floor, 0.80 on walls). Normal-light floor grey over 200 randomised scenes: mean 40.5 → 91.0 (branch `fix/floor-brightness`, measured 1 Nov 2026). Tested in `TestTexturedSurfaceBrightness`.
 - Dark floor texture ranges: `randomization.yaml` solid `floor_color` (was 0.20–0.48) and noise `floor_base` (was 0.22–0.45) widened to 0.30–0.75 and 0.30–0.70 (ASSUMPTION, arena floor colour unknown). With the reset, normal-light floor grey over 200 scenes: mean 91.0 → 109.5, share below 60: 18.3 % → 0.6 %, above 200: 0 %.
 - Build-specific render pin: `TestRenderPinned` compared sha256 hashes recorded with this laptop's pybullet build. It now compares each pinned pose with a render made from an independently computed view matrix in the same run (per-pose BGR mean absolute difference < 0.05; pins the view/axis maths, not lighting or projection). Fails on a roll sign flip, an up-vector swap and a 0.5° yaw error (branch `chore/check-full`, 1 Nov 2026).
@@ -91,7 +91,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Survivor 3D clearance in `TrajectorySampler` (applies only when the caller passes the survivors), and survivors never placed on the start cell.
 - Known regression on that branch: with survivors passed, 15 of 160 test sequences collapse to 1 frame, and repeated positions rise from 18 to 1356. A survivor plus 0.6 m clearance blocks a 1.5 m corridor.
 
-**Only on the unmerged branch `fix/trajectory-v2` (redo of `0483528`, built from `main`), not on `main`:**
+**Merged into `main` from `fix/trajectory-v2` (redo of `0483528`; commits `43061f9` to `d53b98d`; the branch is deleted locally and on `origin`):**
 - Survivors never placed on the start cell (`SurvivorPlacer.place`; 22 of 160 test scenes on `main`, 0 on the branch). Tested in `TestPlacement`.
 - `SurvivorInfo.aabb`: each survivor's real 3D box (union of its parts' PyBullet AABBs, any posture). Tested in `TestAABB`.
 - `sample_poses` (the source of training frames) takes the survivor boxes (`survivor_boxes=[s.aabb ...]`) and enforces `arena.yaml trajectory.survivor_clearance_m` (0.35 m, ASSUMPTION) and `max_survivor_box_fraction` (0.5, ASSUMPTION). It returns exactly n unique poses or raises `PoseSamplingError` with rejection counts by reason; the counts are logged at INFO on every call. Tested in `test_trajectory.py` and over 8 layouts x 20 seeds in `test_trajectory_scenes.py`.
@@ -99,7 +99,6 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - `camera.py`: axis maths shared through `camera_axes` (renders byte-identical before and after, pinned by `TestRenderPinned`), and `project_aabb` / `projected_box_fraction` (box to image rectangle, within 2 px of the rendered mask box in `TestBoxProjection`).
 
 **Known open defects on `main`:**
-- Camera inside survivors: no survivor clearance check, and survivors can sit on the start cell (22 of 160 test scenes). Fixed on `fix/trajectory-v2` (start cell, `sample_poses`, `generate_sequence`).
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Truncation/occlusion always 0: `labels.py` never computes them, so its filters never fire.
 - Saturated floor colours: texture colours are sampled per RGB channel independently, so the wider floor ranges also give strongly tinted floors (for example purple, green).
