@@ -1,13 +1,10 @@
 # setup_repo_structure.ps1
-# Creates the standard repository structure for NIDAR CV + GCS
+# Creates the standard repository structure for NIDAR human (survivor) detection
 
 $directories = @(
     "cv",
     "cv/detectors",
     "cv/utils",
-    "gcs",
-    "gcs/backend",
-    "gcs/frontend",
     "interfaces/schemas",
     "scripts",
     "notebooks",
@@ -42,7 +39,7 @@ if (-not (Test-Path $diaryPath)) {
 # Engineering Diary — Day 1: Environment & Foundations
 
 **Date:** $(Get-Date -Format 'yyyy-MM-dd')
-**Lead:** Aryan (AI/CV + GCS Lead)
+**Lead:** Aryan (Human Detection Lead)
 
 ## Goals
 - Tooling decisions documented (001_tooling.md)

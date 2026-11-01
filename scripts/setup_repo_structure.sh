@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup_repo_structure.sh
-# Creates standard repository structure for NIDAR CV + GCS
+# Creates standard repository structure for NIDAR human (survivor) detection
 
 set -e
 
@@ -8,9 +8,6 @@ directories=(
     "cv"
     "cv/detectors"
     "cv/utils"
-    "gcs"
-    "gcs/backend"
-    "gcs/frontend"
     "interfaces/schemas"
     "scripts"
     "notebooks"
