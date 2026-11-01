@@ -17,6 +17,8 @@ Features:
   - Segmentation mask int32 array of shape ``(H, W)`` (flags:
     ``p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX``).
 - Built-in FPS benchmarking tool.
+- Projection of a world-frame 3D box to an image rectangle (``project_aabb``,
+  ``projected_box_fraction``), using the same axes as rendering (``camera_axes``).
 
 Coordinate conventions:
 - World axes: x = East/rightward, y = North/forward, z = Upward (ROS 2 REP 103).
@@ -95,6 +97,62 @@ class RenderOutput(NamedTuple):
 
     seg_mask: np.ndarray
     """PyBullet segmentation mask (int32, shape HxW)."""
+
+
+# --------------------------------------------------------------------------- #
+# Camera axes
+# --------------------------------------------------------------------------- #
+def camera_axes(
+    pose: CameraPose | tuple[float, float, float, float, float, float],
+) -> tuple[tuple[float, float, float], np.ndarray, np.ndarray]:
+    """
+    Eye position, forward unit vector and up unit vector of a camera pose.
+
+    Shared by :meth:`PinholeCamera.compute_view_matrix` and the box projection
+    so both use identical axes.
+    """
+    if isinstance(pose, tuple):
+        x, y, z, yaw, pitch, roll = pose
+    else:
+        x, y, z, yaw, pitch, roll = pose.as_tuple()
+
+    yaw_rad = math.radians(yaw)
+    pitch_rad = math.radians(pitch)
+    roll_rad = math.radians(roll)
+
+    # Forward unit vector in world space:
+    # yaw=0 -> +x, yaw=90 -> +y.
+    # pitch < 0 tilts downward towards ground (-z).
+    cp = math.cos(pitch_rad)
+    sp = math.sin(pitch_rad)
+    cy = math.cos(yaw_rad)
+    sy = math.sin(yaw_rad)
+
+    fwd = np.array([cp * cy, cp * sy, sp], dtype=np.float64)
+    fwd_norm = np.linalg.norm(fwd)
+    if fwd_norm > 1e-8:
+        fwd /= fwd_norm
+
+    # Nominal up vector before roll
+    # If camera points horizontally (pitch=0), up is [0, 0, 1].
+    # If camera pitches down (pitch=-theta), up tilts forward [sp*cy, sp*sy, -cp].
+    up_nominal = np.array([-sp * cy, -sp * sy, cp], dtype=np.float64)
+    up_norm = np.linalg.norm(up_nominal)
+    if up_norm > 1e-8:
+        up_nominal /= up_norm
+
+    # Camera right vector = fwd x up
+    right = np.cross(fwd, up_nominal)
+    right_norm = np.linalg.norm(right)
+    if right_norm > 1e-8:
+        right /= right_norm
+
+    # Apply roll rotation around optical axis (fwd)
+    cr = math.cos(roll_rad)
+    sr = math.sin(roll_rad)
+    up = cr * up_nominal + sr * right
+
+    return (x, y, z), fwd, up
 
 
 # --------------------------------------------------------------------------- #
@@ -190,47 +248,7 @@ class PinholeCamera:
         pose : CameraPose or 6-tuple
             (x, y, z, yaw, pitch, roll) where angles are in degrees.
         """
-        if isinstance(pose, tuple):
-            x, y, z, yaw, pitch, roll = pose
-        else:
-            x, y, z, yaw, pitch, roll = pose.as_tuple()
-
-        yaw_rad = math.radians(yaw)
-        pitch_rad = math.radians(pitch)
-        roll_rad = math.radians(roll)
-
-        # Forward unit vector in world space:
-        # yaw=0 -> +x, yaw=90 -> +y.
-        # pitch < 0 tilts downward towards ground (-z).
-        cp = math.cos(pitch_rad)
-        sp = math.sin(pitch_rad)
-        cy = math.cos(yaw_rad)
-        sy = math.sin(yaw_rad)
-
-        fwd = np.array([cp * cy, cp * sy, sp], dtype=np.float64)
-        fwd_norm = np.linalg.norm(fwd)
-        if fwd_norm > 1e-8:
-            fwd /= fwd_norm
-
-        # Nominal up vector before roll
-        # If camera points horizontally (pitch=0), up is [0, 0, 1].
-        # If camera pitches down (pitch=-theta), up tilts forward [sp*cy, sp*sy, -cp].
-        up_nominal = np.array([-sp * cy, -sp * sy, cp], dtype=np.float64)
-        up_norm = np.linalg.norm(up_nominal)
-        if up_norm > 1e-8:
-            up_nominal /= up_norm
-
-        # Camera right vector = fwd x up
-        right = np.cross(fwd, up_nominal)
-        right_norm = np.linalg.norm(right)
-        if right_norm > 1e-8:
-            right /= right_norm
-
-        # Apply roll rotation around optical axis (fwd)
-        cr = math.cos(roll_rad)
-        sr = math.sin(roll_rad)
-        up = cr * up_nominal + sr * right
-
+        (x, y, z), fwd, up = camera_axes(pose)
         eye = [float(x), float(y), float(z)]
         target = [float(x + fwd[0]), float(y + fwd[1]), float(z + fwd[2])]
         up_list = [float(up[0]), float(up[1]), float(up[2])]
@@ -241,6 +259,94 @@ class PinholeCamera:
             cameraUpVector=up_list,
         )
         return list(view_mat)
+
+    # -- Box Projection --
+
+    def project_aabb(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+    ) -> tuple[float, float, float, float] | None:
+        """
+        Image-space bounding rectangle of a world-frame axis-aligned box.
+
+        The box is clipped at the near plane (its 12 edges are cut where they
+        cross it), projected with the same axes and FOV as :meth:`render`, and
+        the rectangle is clipped to the image. Walls and other bodies are
+        ignored (no occlusion).
+
+        Conservative: for a rotated or non-box body the AABB is larger than the
+        body, so the rectangle can be larger than the body's real silhouette
+        box (never smaller, up to pixel rounding).
+
+        Returns
+        -------
+        (x1, y1, x2, y2) in float pixels, origin top-left, or None if no part
+        of the box is in front of the camera or inside the image.
+        """
+        (x, y, z), fwd, up = camera_axes(pose)
+        # Same basis as gluLookAt / p.computeViewMatrix.
+        side = np.cross(fwd, up)
+        side /= np.linalg.norm(side)
+        cam_up = np.cross(side, fwd)
+        eye = np.array([x, y, z], dtype=np.float64)
+
+        lo, hi = aabb
+        corners = np.array(
+            [
+                [(lo, hi)[i][0], (lo, hi)[j][1], (lo, hi)[k][2]]
+                for i in (0, 1)
+                for j in (0, 1)
+                for k in (0, 1)
+            ],
+            dtype=np.float64,
+        )
+        rel = corners - eye
+        cam = np.stack([rel @ side, rel @ cam_up, rel @ fwd], axis=1)  # x right, y up, depth
+
+        near = self.near_clip
+        points = [c for c in cam if c[2] >= near]
+        # Corner index bits are (x, y, z); an edge joins corners differing in one bit.
+        for a in range(8):
+            for bit in (1, 2, 4):
+                b = a | bit
+                if b == a:
+                    continue
+                da, db = cam[a][2] - near, cam[b][2] - near
+                if (da < 0.0) != (db < 0.0):
+                    t = da / (da - db)
+                    points.append(cam[a] + t * (cam[b] - cam[a]))
+        if not points:
+            return None
+
+        pts = np.array(points)
+        tan_v = math.tan(math.radians(self.vertical_fov_deg) / 2.0)
+        ndc_x = pts[:, 0] / (pts[:, 2] * tan_v * self.aspect_ratio)
+        ndc_y = pts[:, 1] / (pts[:, 2] * tan_v)
+        u = (ndc_x + 1.0) * 0.5 * self.width
+        v = (1.0 - ndc_y) * 0.5 * self.height
+
+        x1, x2 = max(float(u.min()), 0.0), min(float(u.max()), float(self.width))
+        y1, y2 = max(float(v.min()), 0.0), min(float(v.max()), float(self.height))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return (x1, y1, x2, y2)
+
+    def projected_box_fraction(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+    ) -> float:
+        """
+        Fraction of the image covered by :meth:`project_aabb` (0.0 to 1.0).
+
+        Conservative for rotated bodies (see :meth:`project_aabb`).
+        """
+        rect = self.project_aabb(pose, aabb)
+        if rect is None:
+            return 0.0
+        x1, y1, x2, y2 = rect
+        return (x2 - x1) * (y2 - y1) / float(self.width * self.height)
 
     # -- Rendering --
 

@@ -9,6 +9,7 @@ Validates:
 4. Render returns BGR uint8 (H, W, 3), depth float32 (H, W), seg int32 (H, W).
 5. Benchmark method executes and returns positive FPS.
 6. Renders of a fixed scene and fixed poses are byte-identical to recorded hashes.
+7. project_aabb matches the rendered segmentation box of an axis-aligned box.
 """
 
 from __future__ import annotations
@@ -207,3 +208,70 @@ def _pinned_render_hashes() -> dict[int, str]:
 class TestRenderPinned:
     def test_renders_match_recorded_hashes(self) -> None:
         assert _pinned_render_hashes() == PINNED_HASHES
+
+
+# --------------------------------------------------------------------------- #
+# Box projection
+# --------------------------------------------------------------------------- #
+BOX_HALF = [0.3, 0.2, 0.4]
+BOX_POS = [3.0, 0.0, 0.4]
+BOX_AABB = ((2.7, -0.2, 0.0), (3.3, 0.2, 0.8))
+
+PROJECTION_POSES = [
+    CameraPose(x=1.0, y=0.0, z=0.8, yaw=0.0, pitch=-30.0, roll=0.0),
+    CameraPose(x=1.5, y=0.5, z=1.0, yaw=340.0, pitch=-35.0, roll=10.0),
+    CameraPose(x=2.0, y=-0.6, z=0.6, yaw=20.0, pitch=-10.0, roll=-15.0),
+    CameraPose(x=3.0, y=-1.5, z=1.2, yaw=90.0, pitch=-40.0, roll=5.0),
+    CameraPose(x=4.5, y=0.2, z=0.9, yaw=180.0, pitch=-25.0, roll=0.0),
+    CameraPose(x=3.0, y=0.0, z=1.6, yaw=0.0, pitch=-90.0, roll=30.0),
+    # Box face 0.05 m away: part of the box is closer than the near plane.
+    CameraPose(x=2.0, y=-0.25, z=0.5, yaw=30.0, pitch=-10.0, roll=0.0),
+]
+
+
+@pytest.fixture(scope="module")
+def box_scene():
+    cid = p.connect(p.DIRECT)
+    col = p.createCollisionShape(p.GEOM_BOX, halfExtents=BOX_HALF, physicsClientId=cid)
+    vis = p.createVisualShape(
+        p.GEOM_BOX, halfExtents=BOX_HALF, rgbaColor=[0.7, 0.2, 0.2, 1.0], physicsClientId=cid
+    )
+    bid = p.createMultiBody(0, col, vis, BOX_POS, physicsClientId=cid)
+    yield cid, bid
+    p.disconnect(cid)
+
+
+class TestBoxProjection:
+    @pytest.mark.parametrize("pose", PROJECTION_POSES)
+    def test_matches_rendered_mask_box(self, box_scene, pose: CameraPose) -> None:
+        from sim.labels import decode_segmentation_mask
+
+        cid, bid = box_scene
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        mask = decode_segmentation_mask(cam.render(pose, physics_client=cid).seg_mask) == bid
+        ys, xs = np.nonzero(mask)
+        assert len(xs) > 0
+        rect = cam.project_aabb(pose, BOX_AABB)
+        assert rect is not None
+        mask_box = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+        for got, want in zip(rect, mask_box, strict=True):
+            assert abs(got - want) <= 2.0, f"projected {rect} vs mask {mask_box}"
+
+    def test_box_behind_camera(self) -> None:
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        pose = CameraPose(x=5.0, y=0.0, z=0.8, yaw=0.0, pitch=-30.0)
+        assert cam.project_aabb(pose, BOX_AABB) is None
+        assert cam.projected_box_fraction(pose, BOX_AABB) == 0.0
+
+    def test_eye_inside_box_fills_image(self) -> None:
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        pose = CameraPose(x=3.0, y=0.0, z=0.5, yaw=0.0, pitch=-30.0)
+        assert cam.projected_box_fraction(pose, BOX_AABB) == pytest.approx(1.0)
+
+    def test_fraction_independent_of_resolution(self) -> None:
+        pose = PROJECTION_POSES[0]
+        small = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        large = PinholeCamera(arena_config_path=ARENA_CONFIG, width=1280, height=720)
+        assert small.projected_box_fraction(pose, BOX_AABB) == pytest.approx(
+            large.projected_box_fraction(pose, BOX_AABB)
+        )
