@@ -8,10 +8,12 @@ Validates:
 3. Projection matrix produces valid 16-element PyBullet format.
 4. Render returns BGR uint8 (H, W, 3), depth float32 (H, W), seg int32 (H, W).
 5. Benchmark method executes and returns positive FPS.
+6. Renders of a fixed scene and fixed poses are byte-identical to recorded hashes.
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -125,3 +127,83 @@ class TestRendering:
             )
         finally:
             p.resetSimulation(physicsClientId=pybullet_session)
+
+
+# --------------------------------------------------------------------------- #
+# Render regression pin
+# --------------------------------------------------------------------------- #
+# Fixed poses covering yaw, pitch (down to nadir) and roll in both directions.
+PINNED_POSES = [
+    CameraPose(x=1.0, y=0.0, z=0.8, yaw=0.0, pitch=-30.0, roll=0.0),
+    CameraPose(x=1.5, y=-0.3, z=0.7, yaw=10.0, pitch=-45.0, roll=5.0),
+    CameraPose(x=2.0, y=0.4, z=1.0, yaw=350.0, pitch=-15.0, roll=-8.0),
+    CameraPose(x=3.0, y=-1.0, z=0.9, yaw=90.0, pitch=-30.0, roll=3.0),
+    CameraPose(x=4.5, y=1.2, z=0.6, yaw=265.0, pitch=-60.0, roll=-12.0),
+    CameraPose(x=5.5, y=0.0, z=1.2, yaw=180.0, pitch=-5.0, roll=20.0),
+    CameraPose(x=3.5, y=0.0, z=1.5, yaw=135.0, pitch=-90.0, roll=0.0),
+]
+
+# sha256 of (bgr, depth, seg_mask) bytes per pose at 320x180, recorded on the
+# camera code before the axis helper refactor (pybullet 3.2.7 built from source,
+# dev laptop). Only regenerate (with _pinned_render_hashes) when the renderer
+# itself changes, never to make a sim/camera.py change pass.
+PINNED_HASHES = {
+    0: "8eec5b7c2d4d4767927c4e589f0ab72d8e43c919bb432f7c249c0af015516e57",
+    1: "bfae9ee8e1ee9eeb62e5d50423c4932ec37e7a17c3b14b6af1b6954854a1a61b",
+    2: "ab2a5ff0d32c5e61cac9c14abdd06e008ab607a073fb54259f9ec286a8378b8c",
+    3: "e2e8ebfe45df47a92223ab321f1603915a1ab89504d3a56d6cfea7876bd85575",
+    4: "a295f14c71449458888c705eb707b4ffd6ba1e24e6d569221e2fea4655ccec1b",
+    5: "2fb4784ab144bd414b549201b11e76d6d2eb4b2156b62c8a350c974d2d9d2df6",
+    6: "906dfcdddbec93a52fa6d43993db58b96d606a94e5cef9817a5a8d94a49e0ab3",
+}
+
+
+def _build_pinned_scene(cid: int) -> None:
+    """Floor, two walls, a person-sized box and a sphere, fixed colours."""
+
+    def box(half: list[float], pos: list[float], rgb: list[float], yaw: float = 0.0) -> None:
+        col = p.createCollisionShape(p.GEOM_BOX, halfExtents=half, physicsClientId=cid)
+        vis = p.createVisualShape(
+            p.GEOM_BOX, halfExtents=half, rgbaColor=rgb + [1.0], physicsClientId=cid
+        )
+        p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=col,
+            baseVisualShapeIndex=vis,
+            basePosition=pos,
+            baseOrientation=p.getQuaternionFromEuler([0.0, 0.0, yaw]),
+            physicsClientId=cid,
+        )
+
+    box([5.0, 3.0, 0.01], [3.0, 0.0, -0.01], [0.5, 0.5, 0.52])
+    box([5.0, 0.05, 1.0], [3.0, 1.6, 1.0], [0.8, 0.8, 0.78])
+    box([5.0, 0.05, 1.0], [3.0, -1.6, 1.0], [0.7, 0.75, 0.8])
+    box([0.9, 0.25, 0.15], [3.5, 0.2, 0.15], [0.7, 0.15, 0.15], yaw=0.6)
+    vis = p.createVisualShape(
+        p.GEOM_SPHERE, radius=0.12, rgbaColor=[0.9, 0.75, 0.6, 1.0], physicsClientId=cid
+    )
+    p.createMultiBody(
+        baseMass=0, baseVisualShapeIndex=vis, basePosition=[4.5, -0.2, 0.12], physicsClientId=cid
+    )
+
+
+def _pinned_render_hashes() -> dict[int, str]:
+    cid = p.connect(p.DIRECT)
+    try:
+        _build_pinned_scene(cid)
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        hashes = {}
+        for i, pose in enumerate(PINNED_POSES):
+            out = cam.render(pose, physics_client=cid)
+            h = hashlib.sha256()
+            for arr in (out.bgr, out.depth, out.seg_mask):
+                h.update(np.ascontiguousarray(arr).tobytes())
+            hashes[i] = h.hexdigest()
+        return hashes
+    finally:
+        p.disconnect(cid)
+
+
+class TestRenderPinned:
+    def test_renders_match_recorded_hashes(self) -> None:
+        assert _pinned_render_hashes() == PINNED_HASHES
