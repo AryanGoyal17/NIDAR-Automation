@@ -2,7 +2,7 @@
 
 > Project context for Claude Code (the only AI coding tool used on this repo) and for new chats. Read it fully before doing any task.
 > Keep it current: when a decision, status line or open question changes, edit this file in the same commit.
-> Last reviewed: 1 Nov 2026.
+> Last reviewed: 2 Nov 2026.
 
 ## 1. What this repo is
 
@@ -159,8 +159,9 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
   - **Metric depth later:** the meta has what it needs (pose, intrinsics, near/far clip, survivor world positions and 3D boxes). The depth buffer can be re-rendered with `replay_frame`'s render call.
   - **Contact sheet:** `outputs/scratch/generator/contact_sheet_gen40_w1.png` (gitignored).
 - Tests: `tests/test_sim/test_generator.py` (fast, 160x90: same args identical, workers 1 = 2, written labels = in-memory labels, empty label file only for negatives, always-ambiguous labeller writes nothing, resume, refused arguments, failing scene) and `tests/test_sim/test_generator_scenes.py` (`NIDAR_SCENE_TESTS=1`: replay, memory).
+- Branch `feat/train-eval`: two generator keys, both defaulting to the old behaviour. `layouts.handmade_include` (list of hand-made layout names; null = all 6; unknown or empty list raises) and `aimed.distance_sampling` (`uniform` | `log_uniform`, one rng draw either way). Checked 2 Nov 2026: a 4-scene x 4-frame run at 320x180, seed 11, 2 workers, with `main`'s code and with this branch gives byte-identical images, labels and attempts and equal meta except `config_hash`, which hashes the effective config and now includes the two fields; finished runs made before this change (for example `gen40_*`) are therefore refused on resume (exit 2). Tested in `TestLayoutIncludeAndDistance`.
 
-**On branch `feat/coco-assets` (real-photo assets from COCO val2017, not merged). COCO sanity set, not arena: COCO photos are a regression and sanity check, never an arena score. Rules and reasons: `docs/decisions/007_real_data_sources.md`.**
+**Merged into `main` from `feat/coco-assets` (real-photo assets from COCO val2017; `main` at `d217c87`, the branch no longer exists locally). COCO sanity set, not arena: COCO photos are a regression and sanity check, never an arena score. Rules and reasons: `docs/decisions/007_real_data_sources.md`.**
 - `configs/coco.yaml` (every value ASSUMPTION unless marked as the owner's choice) and `data_tools/coco_common.py` (config, annotation index, `ImageZip`, split hash, xywh to YOLO, size limits read from `arena.yaml labels`, sha256, 64-bit dHash, disk guard). Disk guard in decimal GB: every large step stops if less than `disk.min_free_gb` (1.0) would remain free, and a set estimated above `disk.confirm_above_gb` (0.5) is not written without `--yes`.
 - `data_tools/get_coco.py`: the only setup-time download (val2017.zip, annotations_trainval2017.zip into `data/coco/`). Streams in 1 MiB chunks, hashes while streaming, resumes a `.part` file when the server answers 206 and restarts on 200, checks the byte count, records url/bytes/sha256/UTC time in `data/coco/DOWNLOAD.json` (sha256 recorded, not verified: no official checksum known, TBD), every attempt (start/end byte, outcome, failed ones included) with `attempts_count` / `resumes_count`, and the `zipfile.testzip` result of each zip. Skips existing files (re-hash; a sha256 different from the recorded one is an error). Extracts only `instances_val2017.json` and `captions_val2017.json` (zip-slip check) and checks each against the CRC32 and size in the zip directory, also on re-runs (mismatch = error; a mismatching existing file is extracted again); records CRC32, sizes and the sha256 of the extracted file. `val2017.zip` stays zipped. A blocked download exits 3 with no substitute source. Fetching only the two members by HTTP range (about 7.3 MB of 252.9 MB) is a possible fallback, NOT implemented (`data/README.md`). Tests: `test_get_coco.py` (fake `urlopen`: fresh, resume, restart, short body, blocked, unsafe member, CRC mismatch, tampered file extracted again, attempts/resumes/testzip recorded and kept on re-run).
 - `data/README.md` (committed, the only file under `data/`): licence terms (annotations CC BY 4.0, images from Flickr under their own licences, internal research use only, never committed or redistributed).
@@ -200,7 +201,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 
 **Planned (not built yet):**
 - **Task 3:** the frame/dataset generator is merged (`sim/generator.py`). Clutter (`sim/`) is not built yet.
-- `data_tools/` compositor and dataset builder, and the real test set (`data/test_real/`). Person cutouts from COCO are on branch `feat/coco-assets`.
+- `data_tools/` compositor and dataset builder, and the real test set (`data/test_real/`). Person cutouts from COCO are merged (`data_tools/make_person_cutouts.py`).
 - `cv/train/`, `cv/eval/`, `cv/tracking/`, the depth module, the detection API.
 - NCNN export and benchmark scripts, `deploy/pi/`, the handoff note.
 

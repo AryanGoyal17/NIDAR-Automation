@@ -28,6 +28,7 @@ jpeg_quality: 95                # ASSUMPTION
 # --- Scenes ------------------------------------------------------------------
 layouts:
   handmade_dir: sim/layouts     # the 6 hand-made layouts, picked uniformly
+  handmade_include: null         # list of layout names (file stems) to draw from; null = all
   random_prob: 0.5              # ASSUMPTION: share of scenes with a seeded random maze
   random_rows: [7, 15]          # ASSUMPTION: grid rows (even values are rounded up to odd)
   random_cols: [7, 15]          # ASSUMPTION: grid columns
@@ -54,6 +55,7 @@ camera:
 aimed:
   # Horizontal distance from the camera to the centre of the survivor's 3D box
   distance_m: [0.6, 3.5]        # ASSUMPTION
+  distance_sampling: uniform    # uniform | log_uniform (log-uniform favours near distances less)
   # Yaw offset from the bearing to the survivor, as a fraction of half the
   # horizontal FOV (keeps the survivor away from the frame edge)
   bearing_fraction_of_half_hfov: 0.6   # ASSUMPTION

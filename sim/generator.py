@@ -9,7 +9,8 @@ and K frames, each rendered, augmented and labelled with
 
 Frame modes (weights in ``configs/generator.yaml``):
 
-- ``aimed``: the camera is placed 0.6-3.5 m from a chosen survivor, with a
+- ``aimed``: the camera is placed at a distance from a chosen survivor drawn
+  uniformly or log-uniformly from ``aimed.distance_m`` (0.6-3.5 m by default), with a
   clear line of sight (ray cast) and the survivor's bearing within a fraction
   of half the horizontal FOV. Accepted only with at least one kept label.
 - ``free``: :meth:`TrajectorySampler.sample_poses`, as before. Accepted as a
@@ -140,6 +141,8 @@ class GeneratorConfig:
     imgsz: int = 416
     jpeg_quality: int = 95
     handmade_dir: str = "sim/layouts"
+    handmade_include: tuple[str, ...] | None = None
+    """Hand-made layout names (file stems) to draw from; None means all."""
     random_layout_prob: float = 0.5
     random_rows: tuple[int, int] = (7, 15)
     random_cols: tuple[int, int] = (7, 15)
@@ -151,6 +154,8 @@ class GeneratorConfig:
     roll_jitter_deg: float = 3.0
     yaw_jitter_deg: float = 12.0
     aimed_distance_m: tuple[float, float] = (0.6, 3.5)
+    aimed_distance_sampling: str = "uniform"
+    """``uniform`` or ``log_uniform`` (one rng draw either way)."""
     aimed_bearing_fraction: float = 0.6
     aimed_candidates: int = 200
     negative_candidates: int = 50
@@ -172,6 +177,7 @@ class GeneratorConfig:
             imgsz=int(c.imgsz),
             jpeg_quality=int(c.jpeg_quality),
             handmade_dir=str(c.layouts.handmade_dir),
+            handmade_include=_include(getattr(c.layouts, "handmade_include", None)),
             random_layout_prob=float(c.layouts.random_prob),
             random_rows=(int(c.layouts.random_rows[0]), int(c.layouts.random_rows[1])),
             random_cols=(int(c.layouts.random_cols[0]), int(c.layouts.random_cols[1])),
@@ -182,11 +188,16 @@ class GeneratorConfig:
             roll_jitter_deg=float(c.camera.roll_jitter_deg),
             yaw_jitter_deg=float(c.camera.yaw_jitter_deg),
             aimed_distance_m=pair(c.aimed.distance_m),
+            aimed_distance_sampling=str(getattr(c.aimed, "distance_sampling", "uniform")),
             aimed_bearing_fraction=float(c.aimed.bearing_fraction_of_half_hfov),
             aimed_candidates=int(c.aimed.candidates_per_attempt),
             negative_candidates=int(c.negative.candidates_per_attempt),
             max_retries=int(c.retries.max_retries),
         )
+
+
+def _include(v: Any) -> tuple[str, ...] | None:
+    return None if v is None else tuple(str(name) for name in v)
 
 
 def derive_seed(master_seed: int, scene_index: int, stream: str, *extra: int) -> int:
@@ -205,7 +216,27 @@ def handmade_layouts(cfg: GeneratorConfig) -> list[tuple[str, Path]]:
     paths = sorted(Path(cfg.handmade_dir).glob("*.yaml"))
     if not paths:
         raise FileNotFoundError(f"no layouts in {cfg.handmade_dir}")
-    return [(path.stem, path) for path in paths]
+    layouts = [(path.stem, path) for path in paths]
+    if cfg.handmade_include is None:
+        return layouts
+    known = {name for name, _ in layouts}
+    unknown = sorted(set(cfg.handmade_include) - known)
+    if unknown or not cfg.handmade_include:
+        raise ValueError(
+            f"layouts.handmade_include {list(cfg.handmade_include)}: unknown {unknown} "
+            f"(known: {sorted(known)})"
+        )
+    return [(name, path) for name, path in layouts if name in cfg.handmade_include]
+
+
+def aimed_distance(cfg: GeneratorConfig, rng: random.Random) -> float:
+    """One aimed distance draw: uniform or log-uniform over ``aimed_distance_m``."""
+    lo, hi = cfg.aimed_distance_m
+    if cfg.aimed_distance_sampling == "uniform":
+        return rng.uniform(lo, hi)
+    if cfg.aimed_distance_sampling == "log_uniform":
+        return math.exp(rng.uniform(math.log(lo), math.log(hi)))
+    raise ValueError(f"aimed.distance_sampling {cfg.aimed_distance_sampling!r}")
 
 
 @dataclass(frozen=True)
@@ -433,7 +464,7 @@ class Scene:
         max_offset = cfg.aimed_bearing_fraction * self.half_hfov_deg
         rejected: Counter[str] = Counter()
         for _ in range(cfg.aimed_candidates):
-            dist = rng.uniform(*cfg.aimed_distance_m)
+            dist = aimed_distance(cfg, rng)
             az = rng.uniform(0.0, 2.0 * math.pi)
             x, y = cx + dist * math.cos(az), cy + dist * math.sin(az)
             bearing = math.degrees(math.atan2(cy - y, cx - x))

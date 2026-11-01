@@ -384,3 +384,61 @@ class TestSceneFailure:
         base += ["--config", str(config)]
         assert gen.main([*base, "--seed", "1"]) == 0
         assert gen.main([*base, "--seed", "2"]) == 2
+
+
+class TestLayoutIncludeAndDistance:
+    def test_include_limits_layouts(self, cfg: GeneratorConfig) -> None:
+        c = replace(cfg, handmade_include=("loop", "t_junction"))
+        names = {pl.layout_name for i in range(80) if (pl := plan_scene(c, MASTER, i))}
+        handmade = {n for n in names if not n.startswith("random_")}
+        assert handmade == {"loop", "t_junction"}
+
+    def test_include_all_equals_default(self, cfg: GeneratorConfig) -> None:
+        every = tuple(name for name, _ in gen.handmade_layouts(cfg))
+        c = replace(cfg, handmade_include=every)
+        for i in range(30):
+            assert plan_scene(c, MASTER, i) == plan_scene(cfg, MASTER, i)
+
+    def test_unknown_or_empty_include_raises(self, cfg: GeneratorConfig) -> None:
+        with pytest.raises(ValueError, match="unknown"):
+            gen.handmade_layouts(replace(cfg, handmade_include=("loop", "no_such_layout")))
+        with pytest.raises(ValueError):
+            gen.handmade_layouts(replace(cfg, handmade_include=()))
+
+    def test_uniform_is_the_old_draw(self, cfg: GeneratorConfig) -> None:
+        """Default sampling consumes the rng exactly like the old ``rng.uniform``."""
+        import random
+
+        assert cfg.aimed_distance_sampling == "uniform"
+        a, b = random.Random(5), random.Random(5)
+        for _ in range(50):
+            assert gen.aimed_distance(cfg, a) == b.uniform(*cfg.aimed_distance_m)
+        assert a.random() == b.random()
+
+    def test_log_uniform_range_and_median(self, cfg: GeneratorConfig) -> None:
+        import random
+
+        c = replace(cfg, aimed_distance_m=(0.6, 6.0), aimed_distance_sampling="log_uniform")
+        rng = random.Random(1)
+        d = np.array([gen.aimed_distance(c, rng) for _ in range(20000)])
+        assert d.min() >= 0.6 and d.max() <= 6.0
+        # geometric mean of the bounds, sqrt(0.6 * 6.0) = 1.897; uniform would give 3.3
+        assert abs(np.median(d) - math.sqrt(0.6 * 6.0)) < 0.05
+
+    def test_unknown_sampling_raises(self, cfg: GeneratorConfig) -> None:
+        import random
+
+        with pytest.raises(ValueError):
+            gen.aimed_distance(replace(cfg, aimed_distance_sampling="normal"), random.Random(0))
+
+    def test_yaml_keys_read(self, tmp_path: Path) -> None:
+        text = Path("configs/generator.yaml").read_text(encoding="utf-8")
+        text = text.replace("handmade_include: null", "handmade_include: [loop]")
+        text = text.replace("distance_sampling: uniform", "distance_sampling: log_uniform")
+        path = tmp_path / "g.yaml"
+        path.write_text(text, encoding="utf-8")
+        c = GeneratorConfig.from_yaml(path)
+        assert c.handmade_include == ("loop",)
+        assert c.aimed_distance_sampling == "log_uniform"
+        default = GeneratorConfig.from_yaml()
+        assert default.handmade_include is None and default.aimed_distance_sampling == "uniform"
