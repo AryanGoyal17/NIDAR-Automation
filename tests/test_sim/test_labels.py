@@ -13,6 +13,7 @@ Validates:
 8. Round-trip label file save and load.
 9. Training-resolution thresholds converted to the render size (1280x720, 640x360).
 10. label_frame: kept and dropped labels with reasons, from synthetic silhouettes.
+11. Visibility: contrast against a ring, low-contrast drop, hard tag, ambiguous frames.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import pytest
 from sim.labels import (
     DROP_BOX_TOO_NARROW,
     DROP_BOX_TOO_SHORT,
+    DROP_LOW_CONTRAST,
     DROP_OCCLUDED,
     DROP_TRUNCATED,
     DROP_TRUNCATION_UNBOUNDED,
@@ -39,6 +41,7 @@ from sim.labels import (
     label_frame,
     load_yolo_labels,
     save_yolo_labels,
+    survivor_contrast,
 )
 
 
@@ -498,10 +501,17 @@ def _silhouette(in_frame: np.ndarray, outside: int = 0, exact: bool = True) -> S
     )
 
 
+def _image(seg: np.ndarray, survivor: int = 200, background: int = 50) -> np.ndarray:
+    """Grey frame: survivor pixels at one level, everything else at another."""
+    img = np.full((*seg.shape, 3), background, dtype=np.uint8)
+    img[seg == BODY] = survivor
+    return img
+
+
 def _frame(width, height, box, alone_box=None, outside=0, exact=True, config=None):
     seg = _scene(width, height, box)
     alone = _scene(width, height, alone_box or box) == BODY
-    return label_frame(seg, [BODY], [_silhouette(alone, outside, exact)], config)
+    return label_frame(seg, [BODY], [_silhouette(alone, outside, exact)], _image(seg), config)
 
 
 class TestLabelFrame:
@@ -579,12 +589,12 @@ class TestLabelFrame:
     def test_silhouette_count_must_match(self) -> None:
         seg = _scene(320, 180, (10, 10, 60, 90))
         with pytest.raises(ValueError, match="silhouettes"):
-            label_frame(seg, [BODY], [])
+            label_frame(seg, [BODY], [], _image(seg))
 
     def test_visible_without_silhouette_raises(self) -> None:
         seg = _scene(320, 180, (10, 10, 60, 90))
         with pytest.raises(ValueError, match="no silhouette"):
-            label_frame(seg, [BODY], [None])
+            label_frame(seg, [BODY], [None], _image(seg))
 
 
 class TestComputeSurvivorLabelsWithSilhouettes:
@@ -599,3 +609,123 @@ class TestComputeSurvivorLabelsWithSilhouettes:
         seg = _scene(320, 180, (0, 10, 40, 90))
         sil = _silhouette(seg == BODY, 100, exact=False)
         assert compute_survivor_labels(seg, [BODY], silhouettes=[sil]) == []
+
+
+# --------------------------------------------------------------------------- #
+# 11. Visibility
+# --------------------------------------------------------------------------- #
+class TestSurvivorContrast:
+    def test_uniform_image_has_zero_contrast(self) -> None:
+        seg = _scene(320, 180, (100, 50, 140, 130))
+        img = _image(seg, survivor=90, background=90)
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 3) == 0.0
+
+    def test_grey_difference(self) -> None:
+        seg = _scene(320, 180, (100, 50, 140, 130))
+        img = _image(seg, survivor=120, background=100)
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 3) == pytest.approx(20.0)
+
+    def test_colour_only_contrast_counts(self) -> None:
+        seg = _scene(320, 180, (100, 50, 140, 130))
+        img = np.full((180, 320, 3), 100, dtype=np.uint8)
+        img[seg == BODY] = (40, 100, 160)  # same mean grey level, different colour
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 3) == pytest.approx(60.0)
+
+    def test_ring_is_local(self) -> None:
+        # Background far from the survivor does not matter, only the ring.
+        seg = _scene(320, 180, (100, 50, 140, 130))
+        img = _image(seg, survivor=120, background=100)
+        img[:, :80] = 255
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 3) == pytest.approx(20.0)
+
+    def test_ring_excludes_other_survivors(self) -> None:
+        seg = _scene(320, 180, (100, 50, 140, 130))
+        seg[50:130, 140:160] = 6  # another survivor touching on the right
+        img = _image(seg, survivor=120, background=100)
+        img[seg == 6] = 0
+        assert survivor_contrast(img, seg == BODY, seg >= 0, 3) == pytest.approx(20.0)
+
+    def test_no_ring_returns_none(self) -> None:
+        seg = np.full((40, 40), BODY, dtype=np.int32)
+        img = np.full((40, 40, 3), 90, dtype=np.uint8)
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 3) is None
+
+    def test_ring_width_reaches_exactly(self) -> None:
+        # A stripe at distance 4 px is outside a 3 px ring, inside a 4 px ring.
+        seg = _scene(320, 180, (100, 50, 140, 130))
+        img = _image(seg, survivor=100, background=100)
+        img[:, 143] = 200  # the survivor's last column is 139
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 3) == 0.0
+        assert survivor_contrast(img, seg == BODY, seg == BODY, 4) > 0.0
+
+    def test_dilation_matches_brute_force(self) -> None:
+        from sim.labels import _dilate
+
+        rng = np.random.default_rng(0)
+        mask = rng.random((30, 40)) > 0.97
+        for r in (1, 2, 5):
+            ys, xs = np.nonzero(mask)
+            ref = np.zeros_like(mask)
+            for y, x in zip(ys, xs, strict=True):
+                ref[max(0, y - r) : y + r + 1, max(0, x - r) : x + r + 1] = True
+            assert np.array_equal(_dilate(mask, r), ref)
+
+    @pytest.mark.parametrize(("width", "height", "ring"), [(1280, 720, 9), (640, 360, 5)])
+    def test_ring_width_converted_from_training_resolution(self, width, height, ring) -> None:
+        # 3 px at 416 = 9.2 px at 1280 and 4.6 px at 640, rounded.
+        assert LabelConfig(contrast_ring_px=3.0).thresholds(width, height).ring_px == ring
+
+
+VISIBILITY = LabelConfig(min_contrast=4.0, hard_contrast=12.0)
+
+
+class TestVisibilityFilter:
+    def _run(self, survivor: int, background: int):
+        seg = _scene(1280, 720, (100, 100, 140, 180))
+        sil = _silhouette(seg == BODY)
+        img = _image(seg, survivor=survivor, background=background)
+        return label_frame(seg, [BODY], [sil], img, VISIBILITY)
+
+    def test_invisible_survivor_dropped_and_frame_ambiguous(self) -> None:
+        result = self._run(survivor=12, background=10)
+        assert result.labels == []
+        assert result.dropped[0].reasons == (DROP_LOW_CONTRAST,)
+        assert result.dropped[0].label.contrast == pytest.approx(2.0)
+        assert result.ambiguous
+        assert result.ambiguous_reasons == (DROP_LOW_CONTRAST,)
+
+    def test_hard_survivor_kept_and_tagged(self) -> None:
+        result = self._run(survivor=18, background=10)
+        assert not result.ambiguous
+        assert result.labels[0].hard
+        assert result.labels[0].to_dict()["hard"] is True
+
+    def test_easy_survivor_not_hard(self) -> None:
+        result = self._run(survivor=60, background=10)
+        assert not result.ambiguous
+        assert not result.labels[0].hard
+        assert result.labels[0].contrast == pytest.approx(50.0)
+
+    def test_absent_survivor_does_not_make_frame_ambiguous(self) -> None:
+        seg = _scene(1280, 720, (10, 10, 13, 13))  # 9 px, under the presence floor
+        img = _image(seg, survivor=10, background=10)
+        result = label_frame(seg, [BODY], [_silhouette(seg == BODY)], img, VISIBILITY)
+        assert result.labels == [] and not result.ambiguous
+
+    def test_reasons_from_several_survivors(self) -> None:
+        seg = _scene(1280, 720, (100, 100, 140, 180))
+        seg[300:310, 500:600] = 6  # 10 px tall = 3.25 px at 416: too short
+        sils = [_silhouette(seg == BODY), _silhouette(seg == 6)]
+        img = _image(seg, survivor=12, background=10)
+        img[seg == 6] = 200
+        result = label_frame(seg, [BODY, 6], sils, img, VISIBILITY)
+        assert result.ambiguous_reasons == (DROP_BOX_TOO_SHORT, DROP_LOW_CONTRAST)
+
+    def test_image_size_must_match(self) -> None:
+        seg = _scene(320, 180, (10, 10, 60, 90))
+        with pytest.raises(ValueError, match="image"):
+            label_frame(seg, [BODY], [_silhouette(seg == BODY)], np.zeros((90, 160, 3), np.uint8))
+
+    def test_thresholds_ordered(self) -> None:
+        with pytest.raises(ValueError, match="hard_contrast"):
+            LabelConfig(min_contrast=10.0, hard_contrast=5.0)

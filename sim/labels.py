@@ -181,6 +181,13 @@ class SurvivorLabel:
     truncation_exact: bool = True
     """False when truncation_fraction is only a lower bound (see :class:`Silhouette`)."""
 
+    contrast: float | None = None
+    """Visibility contrast against the surrounding ring, grey levels 0-255
+    (:func:`survivor_contrast`); None if not measured or no ring pixels."""
+
+    hard: bool = False
+    """Kept, but with contrast below ``labels.hard_contrast``: a hard positive."""
+
     image_width: int = 1280
     """Image width in pixels."""
 
@@ -218,6 +225,8 @@ class SurvivorLabel:
             "occlusion_fraction": round(self.occlusion_fraction, 4),
             "truncation_fraction": round(self.truncation_fraction, 4),
             "truncation_exact": self.truncation_exact,
+            "contrast": None if self.contrast is None else round(self.contrast, 2),
+            "hard": self.hard,
         }
 
 
@@ -298,6 +307,16 @@ class LabelConfig:
     max_canvas_area_factor: float = 4.0
     """Largest silhouette canvas, as a multiple of the frame area."""
 
+    contrast_ring_px: float = 3.0
+    """Width of the ring around the survivor for :func:`survivor_contrast`
+    (px at training resolution)."""
+
+    min_contrast: float = 3.0
+    """Drop a label whose contrast is below this (grey levels): essentially invisible."""
+
+    hard_contrast: float = 8.0
+    """Tag a kept label as hard when its contrast is below this (grey levels)."""
+
     def __post_init__(self) -> None:
         for name in ("max_truncation", "max_occlusion"):
             if not 0.0 <= getattr(self, name) <= 1.0:
@@ -311,6 +330,13 @@ class LabelConfig:
         for name in ("min_box_height_px", "min_box_width_px", "presence_min_area_px"):
             if getattr(self, name) < 0:
                 raise ValueError(f"labels.{name} must be >= 0, got {getattr(self, name)}")
+        if self.contrast_ring_px <= 0:
+            raise ValueError(f"labels.contrast_ring_px must be > 0, got {self.contrast_ring_px}")
+        if not 0.0 <= self.min_contrast <= self.hard_contrast <= 255.0:
+            raise ValueError(
+                "labels need 0 <= min_contrast <= hard_contrast <= 255, got "
+                f"{self.min_contrast} and {self.hard_contrast}"
+            )
 
     def scale(self, width: int, height: int) -> float:
         """Letterbox scale from a ``width x height`` render to training resolution."""
@@ -323,6 +349,7 @@ class LabelConfig:
             min_box_height=self.min_box_height_px / s,
             min_box_width=self.min_box_width_px / s,
             presence_min_pixels=self.presence_min_area_px / (s * s),
+            ring_px=max(1, round(self.contrast_ring_px / s)),
         )
 
     @classmethod
@@ -345,6 +372,7 @@ class RenderThresholds:
     min_box_height: float
     min_box_width: float
     presence_min_pixels: float
+    ring_px: int
 
 
 # Reasons a present survivor's label is dropped (see label_frame).
@@ -353,12 +381,14 @@ DROP_BOX_TOO_NARROW = "box_too_narrow"
 DROP_TRUNCATED = "truncated"
 DROP_TRUNCATION_UNBOUNDED = "truncation_unbounded"
 DROP_OCCLUDED = "occluded"
+DROP_LOW_CONTRAST = "low_contrast"
 DROP_REASONS = (
     DROP_BOX_TOO_SHORT,
     DROP_BOX_TOO_NARROW,
     DROP_TRUNCATED,
     DROP_TRUNCATION_UNBOUNDED,
     DROP_OCCLUDED,
+    DROP_LOW_CONTRAST,
 )
 
 
@@ -382,6 +412,80 @@ class FrameLabels:
 
     dropped: list[DroppedLabel]
     """Survivors present in the frame whose label was dropped."""
+
+    @property
+    def ambiguous(self) -> bool:
+        """A survivor is in the frame but unlabelled: the generator should skip the frame."""
+        return bool(self.dropped)
+
+    @property
+    def ambiguous_reasons(self) -> tuple[str, ...]:
+        """Every drop reason in the frame, in :data:`DROP_REASONS` order."""
+        found = {r for d in self.dropped for r in d.reasons}
+        return tuple(r for r in DROP_REASONS if r in found)
+
+
+# --------------------------------------------------------------------------- #
+# Visibility
+# --------------------------------------------------------------------------- #
+def _dilate(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Binary dilation with a (2 * radius + 1) square, separable, numpy only."""
+    out = mask
+    for axis in (0, 1):
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (radius, radius)
+        padded = np.pad(out, pad)
+        windows = np.lib.stride_tricks.sliding_window_view(padded, 2 * radius + 1, axis=axis)
+        out = windows.any(axis=-1)
+    return out
+
+
+def survivor_contrast(
+    image: np.ndarray,
+    visible: np.ndarray,
+    survivor_pixels: np.ndarray,
+    ring_px: int,
+) -> float | None:
+    """
+    How much a survivor stands out from its surroundings, in grey levels (0-255).
+
+    The largest per-channel absolute difference between the mean of the
+    survivor's visible pixels and the mean of a ring around them: the visible
+    mask dilated by ``ring_px`` (square), minus every survivor pixel. Means
+    make it robust to pixel noise; the per-channel maximum keeps colour-only
+    contrast (for example red on grey of equal brightness).
+
+    Parameters
+    ----------
+    image : np.ndarray
+        The frame after augmentation, (H, W, C) or (H, W).
+    visible : np.ndarray
+        Boolean (H, W) mask of this survivor's visible pixels.
+    survivor_pixels : np.ndarray
+        Boolean (H, W) mask of all survivors' visible pixels (excluded from the ring).
+    ring_px : int
+        Ring width in render pixels.
+
+    Returns
+    -------
+    float or None
+        None if the survivor has no visible pixels or the ring is empty.
+    """
+    ys, xs = np.nonzero(visible)
+    if len(ys) == 0:
+        return None
+    h, w = visible.shape
+    y1, y2 = max(0, ys.min() - ring_px), min(h, ys.max() + 1 + ring_px)
+    x1, x2 = max(0, xs.min() - ring_px), min(w, xs.max() + 1 + ring_px)
+    inside = visible[y1:y2, x1:x2]
+    ring = _dilate(inside, ring_px) & ~survivor_pixels[y1:y2, x1:x2]
+    if not ring.any():
+        return None
+    crop = image[y1:y2, x1:x2].astype(np.float64)
+    if crop.ndim == 2:
+        crop = crop[:, :, None]
+    diff = crop[inside].mean(axis=0) - crop[ring].mean(axis=0)
+    return float(np.abs(diff).max())
 
 
 # --------------------------------------------------------------------------- #
@@ -677,6 +781,7 @@ def label_frame(
     seg_mask: np.ndarray,
     survivors: Sequence[Any],
     silhouettes: Sequence[Silhouette | None],
+    image: np.ndarray,
     config: LabelConfig | None = None,
 ) -> FrameLabels:
     """
@@ -688,8 +793,12 @@ def label_frame(
     reason that applies, when its visible box is shorter than
     ``min_box_height_px`` or narrower than ``min_box_width_px`` (training
     resolution), its truncation exceeds ``max_truncation`` (``truncated``) or
-    is only a lower bound not above it (``truncation_unbounded``), or its
-    occlusion exceeds ``max_occlusion``.
+    is only a lower bound not above it (``truncation_unbounded``), its
+    occlusion exceeds ``max_occlusion``, or its :func:`survivor_contrast` in
+    ``image`` is below ``min_contrast`` (``low_contrast``: essentially
+    invisible). A kept label with contrast below ``hard_contrast`` is tagged
+    ``hard``. A frame with any dropped label is ambiguous
+    (:attr:`FrameLabels.ambiguous`).
 
     Parameters
     ----------
@@ -699,6 +808,9 @@ def label_frame(
         Survivors in the scene.
     silhouettes : sequence of Silhouette or None
         :meth:`SilhouetteRenderer.render` for the same pose, one per survivor.
+    image : np.ndarray
+        The frame as it will be trained on, i.e. after augmentation (same
+        size as ``seg_mask``).
     config : LabelConfig, optional
         Thresholds; defaults to :class:`LabelConfig` defaults.
     """
@@ -707,7 +819,11 @@ def label_frame(
         raise ValueError(f"{len(silhouettes)} silhouettes for {len(survivors)} survivors")
     decoded = decode_segmentation_mask(seg_mask)
     h, w = decoded.shape[:2]
+    if image.shape[:2] != (h, w):
+        raise ValueError(f"image is {image.shape[:2]}, segmentation mask is {(h, w)}")
     th = cfg.thresholds(w, h)
+    all_ids = [b for s in survivors for b in _survivor_body_ids(s)]
+    survivor_pixels = np.isin(decoded, all_ids)
 
     result = FrameLabels(labels=[], dropped=[])
     for idx, survivor in enumerate(survivors):
@@ -727,6 +843,8 @@ def label_frame(
         )
         assert label is not None  # no filter can reject it with these arguments
         _measure(label, visible, silhouettes[idx])
+        label.contrast = survivor_contrast(image, visible, survivor_pixels, th.ring_px)
+        low_contrast = label.contrast is not None and label.contrast < cfg.min_contrast
 
         x1, y1, x2, y2 = label.bbox_xyxy
         failed = {
@@ -737,11 +855,13 @@ def label_frame(
                 not label.truncation_exact and label.truncation_fraction <= cfg.max_truncation
             ),
             DROP_OCCLUDED: label.occlusion_fraction > cfg.max_occlusion,
+            DROP_LOW_CONTRAST: low_contrast,
         }
         reasons = tuple(r for r in DROP_REASONS if failed[r])
         if reasons:
             result.dropped.append(DroppedLabel(label=label, reasons=reasons))
         else:
+            label.hard = label.contrast is not None and label.contrast < cfg.hard_contrast
             result.labels.append(label)
     return result
 

@@ -132,6 +132,19 @@ labels:
   # lower bound (label dropped as truncation_unbounded)
   max_canvas_area_factor: 4.0       # ASSUMPTION: above the measured p95 (2.42) of 256 protocol poses at 1280x720
 
+  # Visibility, measured on the frame after augmentation: contrast = largest
+  # per-channel |mean(survivor pixels) - mean(ring around them)|, grey levels.
+  # Ring width in px at imgsz (9 px at 1280x720, 5 px at 640x360).
+  contrast_ring_px: 3               # ASSUMPTION: not tuned
+  # Drop only essentially invisible survivors (frame becomes ambiguous). On the
+  # 256-frame protocol plus a forced low-light set (1 Nov 2026), 26 of the 27
+  # size-passing low-light survivors under 3.0 were invisible by eye, 1 faint;
+  # the lowest normal-light contrast was 7.4 (clearly visible).
+  min_contrast: 3.0                 # ASSUMPTION: chosen by eye from crops sorted by contrast
+  # Keep, but tag as "hard" (metadata only): low-light crops from about 4 to 8
+  # were hard to see, from about 8 up dim but clearly visible.
+  hard_contrast: 8.0                # ASSUMPTION: chosen by eye from crops sorted by contrast
+
 # --- Survivor (Target) Specifications ----------------------------------------
 survivor:
   # Physical target nature ("human", "mannequin", or "dummy")

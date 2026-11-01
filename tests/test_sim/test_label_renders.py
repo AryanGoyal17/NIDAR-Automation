@@ -274,3 +274,55 @@ class TestOcclusion:
         with SilhouetteRenderer(cam, [rear], cid, max_canvas_area_factor=CANVAS_CAP) as sr:
             alone = sr.render(VIEW)[0]
         assert int((alone.in_frame != sils[1].in_frame).sum()) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Visibility (thresholds from arena.yaml)
+# --------------------------------------------------------------------------- #
+NEAR_BLACK = {
+    "ambient_coeff": 0.03,
+    "diffuse_coeff": 0.03,
+    "specular_coeff": 0.0,
+    "light_color": [0.3, 0.3, 0.3],
+}
+
+
+def _visibility_scene(cid: int) -> list[int]:
+    """Closed room (empty background renders white): floor, ceiling, wall behind."""
+    _floor(cid)
+    _box(cid, [10.0, 10.0, 0.005], [0.0, 0.0, 3.0])  # ceiling
+    _box(cid, [0.05, 10.0, 1.6], [4.5, 0.0, 1.5], rgb=(0.7, 0.7, 0.68))  # wall behind
+    return _standing(cid, 3.0, 0.0)
+
+
+class TestVisibility:
+    def _label(self, cam, cid, ids, light: dict, low_light: bool):
+        pytest.importorskip("cv2")
+        pytest.importorskip("yaml")
+        from sim.labels import LabelConfig, label_frame
+        from sim.randomize import FrameAugmentor
+
+        cfg = LabelConfig.from_arena_config(ARENA_CONFIG)
+        out = cam.render(VIEW, physics_client=cid, **light)
+        img = FrameAugmentor().augment(out.bgr, is_low_light=low_light, seed=0)
+        with SilhouetteRenderer(cam, [ids], cid, max_canvas_area_factor=CANVAS_CAP) as sr:
+            result = label_frame(out.seg_mask, [ids], sr.render(VIEW), img, cfg)
+        return result, img, cfg
+
+    def test_near_black_low_light_dropped_and_ambiguous(self, cid, cam) -> None:
+        ids = _visibility_scene(cid)
+        result, img, cfg = self._label(cam, cid, ids, NEAR_BLACK, low_light=True)
+        assert img.mean() < 20, f"scene not near-black: mean grey {img.mean():.1f}"
+        assert result.labels == []
+        assert len(result.dropped) == 1
+        assert result.dropped[0].reasons == ("low_contrast",)
+        assert result.dropped[0].label.contrast < cfg.min_contrast
+        assert result.ambiguous
+        assert result.ambiguous_reasons == ("low_contrast",)
+
+    def test_same_scene_in_normal_light_kept(self, cid, cam) -> None:
+        ids = _visibility_scene(cid)
+        result, _, cfg = self._label(cam, cid, ids, {}, low_light=False)
+        assert not result.ambiguous
+        assert len(result.labels) == 1
+        assert result.labels[0].contrast >= cfg.min_contrast
