@@ -59,6 +59,7 @@ import yaml
 from sim.maze import MazeResult
 
 DEFAULT_CONFIG_PATH = Path("configs/randomization.yaml")
+TEXTURED_BASE_RGBA = [1.0, 1.0, 1.0, 1.0]  # body colour under a texture (white = texture as-is)
 
 
 # --------------------------------------------------------------------------- #
@@ -431,12 +432,15 @@ class SequenceRandomizer:
             wall_tex_id = p.loadTexture(str(w_path), physicsClientId=physics_client)
             floor_tex_id = p.loadTexture(str(f_path), physicsClientId=physics_client)
 
+            # PyBullet multiplies the texture by the body's rgbaColor, so reset the
+            # base colour set by MazeBuilder to white: the texture alone sets the albedo.
             # Apply floor texture
             if maze_res.floor_id >= 0:
                 p.changeVisualShape(
                     maze_res.floor_id,
                     -1,
                     textureUniqueId=floor_tex_id,
+                    rgbaColor=TEXTURED_BASE_RGBA,
                     physicsClientId=physics_client,
                 )
 
@@ -446,6 +450,7 @@ class SequenceRandomizer:
                     w_id,
                     -1,
                     textureUniqueId=wall_tex_id,
+                    rgbaColor=TEXTURED_BASE_RGBA,
                     physicsClientId=physics_client,
                 )
 

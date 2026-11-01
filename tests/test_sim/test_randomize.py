@@ -9,20 +9,26 @@ Validates:
 4. Determinism of FrameAugmentor (same seed -> identical augmented pixels).
 5. Individual transformation primitives (brightness, contrast, gamma, noise, blur, jpeg, vignette, low-light).
 6. Texture application to PyBullet bodies in headless simulation.
+7. Textured floors and walls are not darkened by the body base colour; low light stays dark.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pybullet as p
 import pytest
 
+from sim.camera import CameraPose, PinholeCamera
+from sim.labels import decode_segmentation_mask
 from sim.maze import MazeBuilder
 from sim.randomize import (
     DEFAULT_CONFIG_PATH,
+    TEXTURED_BASE_RGBA,
     FrameAugmentor,
     ProceduralTextureGenerator,
     SequenceRandomizer,
@@ -31,6 +37,7 @@ from sim.randomize import (
 
 ARENA_CONFIG = Path("configs/arena.yaml")
 SAMPLE_LAYOUT = Path("sim/layouts/loop.yaml")
+CORRIDOR_LAYOUT = Path("sim/layouts/straight_corridor.yaml")
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +169,124 @@ class TestSequenceRandomizer:
             assert f_tex_id >= 0
         finally:
             p.disconnect(cid)
+
+    def test_apply_to_sim_resets_base_colour(self, seq_rand: SequenceRandomizer) -> None:
+        """PyBullet multiplies a texture by the body rgbaColor, so it must be white."""
+        cid = p.connect(p.DIRECT)
+        try:
+            builder = MazeBuilder(arena_config_path=ARENA_CONFIG)
+            maze_res = builder.build(SAMPLE_LAYOUT, physics_client=cid)
+            params = seq_rand.sample_sequence_params(seed=55)
+            seq_rand.apply_to_sim(maze_res, params, physics_client=cid)
+
+            for body_id in [maze_res.floor_id, *maze_res.wall_body_ids]:
+                rgba = p.getVisualShapeData(body_id, physicsClientId=cid)[0][7]
+                assert rgba == pytest.approx(TEXTURED_BASE_RGBA)
+        finally:
+            p.disconnect(cid)
+
+
+# --------------------------------------------------------------------------- #
+# Textured Surface Brightness Tests
+# --------------------------------------------------------------------------- #
+class TestTexturedSurfaceBrightness:
+    """
+    Textured floors and walls must not be darkened by the MazeBuilder base colour.
+
+    All renders: 320x180, straight_corridor, pose (2.25, 2.25, 0.8, yaw 0, pitch -30),
+    3 renders in total. Thresholds come from outputs/scratch/floorfix/threshold_probe.py
+    (1 Nov 2026), run at this size and pose with the camera's fixed default light:
+
+    - k = 0.95 (relative): a solid texture of colour c rendered exactly like an untextured
+      body of colour c (ratio 1.000 for floor and wall, 4 colour pairs). With the old
+      behaviour (texture times MazeBuilder rgba) the ratio was 0.443-0.450 for the floor
+      and 0.792-0.802 for the walls. 0.95 sits between 0.80 and 1.00.
+    - Low light stays dark on purpose: seed 0 is low-light; with its own sampled light the
+      floor was 25.7 and the wall 24.1. Over the 18 low-light seeds in 0-99 the floor was
+      11.0-36.1 and the wall 14.0-31.5. The test requires both below 60, the "too dark"
+      cutoff of the scene statistics.
+    """
+
+    WIDTH, HEIGHT = 320, 180
+    K_RELATIVE = 0.95
+    LOW_LIGHT_MAX = 60.0
+
+    @pytest.fixture
+    def seq_rand(self) -> SequenceRandomizer:
+        return SequenceRandomizer(config_path=DEFAULT_CONFIG_PATH)
+
+    def _surface_grey(self, setup, light: dict | None = None) -> tuple[float, float]:
+        """Build the corridor, run setup(maze, cid), render, return (floor, wall) mean grey."""
+        cid = p.connect(p.DIRECT)
+        try:
+            maze = MazeBuilder(arena_config_path=ARENA_CONFIG).build(
+                CORRIDOR_LAYOUT, physics_client=cid
+            )
+            setup(maze, cid)
+            cam = PinholeCamera(ARENA_CONFIG, width=self.WIDTH, height=self.HEIGHT)
+            pose = CameraPose(x=2.25, y=2.25, z=0.8, yaw=0.0, pitch=-30.0)
+            out = cam.render(pose, physics_client=cid, **(light or {}))
+            decoded = decode_segmentation_mask(out.seg_mask)
+            grey = cv2.cvtColor(out.bgr, cv2.COLOR_BGR2GRAY).astype(np.float64)
+            floor_mask = decoded == maze.floor_id
+            wall_mask = np.isin(decoded, maze.wall_body_ids)
+            assert floor_mask.any() and wall_mask.any(), "Floor and wall must be visible"
+            return float(grey[floor_mask].mean()), float(grey[wall_mask].mean())
+        finally:
+            p.disconnect(cid)
+
+    def test_solid_texture_renders_like_untextured_colour(
+        self, seq_rand: SequenceRandomizer
+    ) -> None:
+        floor_c, wall_c = 128, 160
+        params = dataclasses.replace(
+            seq_rand.sample_sequence_params(seed=1),
+            floor_texture=ProceduralTextureGenerator.generate_solid(64, 64, (floor_c,) * 3),
+            wall_texture=ProceduralTextureGenerator.generate_solid(64, 64, (wall_c,) * 3),
+        )
+
+        def untextured(maze, cid):
+            p.changeVisualShape(
+                maze.floor_id, -1, rgbaColor=[floor_c / 255.0] * 3 + [1.0], physicsClientId=cid
+            )
+            for w_id in maze.wall_body_ids:
+                p.changeVisualShape(
+                    w_id, -1, rgbaColor=[wall_c / 255.0] * 3 + [1.0], physicsClientId=cid
+                )
+
+        def textured(maze, cid):
+            seq_rand.apply_to_sim(maze, params, physics_client=cid)
+
+        ref_floor, ref_wall = self._surface_grey(untextured)
+        tex_floor, tex_wall = self._surface_grey(textured)
+
+        for name, tex, ref in (("floor", tex_floor, ref_floor), ("wall", tex_wall, ref_wall)):
+            ratio = tex / ref
+            assert self.K_RELATIVE <= ratio <= 1.0 / self.K_RELATIVE, (
+                f"Textured {name} grey {tex:.1f} vs untextured same colour {ref:.1f} "
+                f"(ratio {ratio:.3f}, expected within [{self.K_RELATIVE}, "
+                f"{1.0 / self.K_RELATIVE:.3f}])"
+            )
+
+    def test_low_light_scene_stays_dark(self, seq_rand: SequenceRandomizer) -> None:
+        params = seq_rand.sample_sequence_params(seed=0)
+        assert params.is_low_light
+        light = {
+            "light_direction": params.light_direction,
+            "light_color": params.light_color,
+            "light_distance": params.light_distance,
+            "ambient_coeff": params.ambient_coeff,
+            "diffuse_coeff": params.diffuse_coeff,
+            "specular_coeff": params.specular_coeff,
+            "shadow": params.shadow,
+        }
+
+        floor, wall = self._surface_grey(
+            lambda maze, cid: seq_rand.apply_to_sim(maze, params, physics_client=cid), light
+        )
+
+        assert floor < self.LOW_LIGHT_MAX, f"Low-light floor grey {floor:.1f}"
+        assert wall < self.LOW_LIGHT_MAX, f"Low-light wall grey {wall:.1f}"
 
 
 # --------------------------------------------------------------------------- #
