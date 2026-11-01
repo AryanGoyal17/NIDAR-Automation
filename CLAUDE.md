@@ -118,6 +118,18 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
     - negative: `sample_poses` candidates with no survivor box in view along a clear ray; survivors behind walls give hard negatives.
   - `classify`: ambiguous if any present survivor is dropped, positive with kept labels, negative with nothing present. `generate_frame` retries ambiguous frames and mode mismatches. After 5 retries the slot is skipped, so an ambiguous frame is never accepted (tested with an always-ambiguous labeller).
   - Tests: `tests/test_sim/test_generator.py`.
+- `sim/generator.py`, writing and running (`python -m sim.generator --out data/sim_raw/<run> --scenes N --frames-per-scene K --seed S --workers W --config configs/generator.yaml`):
+  - Files: `images/` (JPEG), `labels/` (YOLO, class 0; empty file only for a negative), and per scene `scenes/<id>.jsonl` (meta), `<id>.attempts.jsonl` (every attempt with its kept and dropped labels) and `<id>.done.json`, written last. `meta.jsonl` and `attempts.jsonl` are merged in scene order. `run.json` holds the arguments and config hash; `manifest.json` holds git commit, config hash, arguments, library versions, counts, skip and retry reasons, timing, CPU per worker, and the power plan at start and end.
+  - Meta line: scene/frame ids (scene id = group id for the split), layout and grid, all seeds, mode, retries and reasons, rejected attempts with dropped labels, pose, intrinsics (fx = fy from the FOV, cx = W/2, cy = H/2), near/far clip, light, low-light flag, survivors (posture, world position, yaw, scale, 3D box), labels (truncation, occlusion, contrast, hard) and timing.
+  - Every file is written to a temporary name, then renamed. A re-run skips scenes with a done.json; another seed, scene count or config is refused (exit 2).
+  - A scene that raises is logged with its traceback, its partial files are removed, `<id>.failed.json` is written and the run continues. The manifest lists it in `failed_scenes`, the CLI exits 1, and a re-run retries it.
+  - Workers: a spawn pool with one scene per task. Output is identical for 1 and 2 workers apart from timing (fast test).
+  - `replay_frame(meta)` re-renders a frame from its meta line alone. 5 random frames were byte-identical to the written JPEG and labels; no meta field had to be added (heavy test).
+- Memory, one worker, 320x180, 1 frame per scene (1 Nov 2026, power plan Balanced, on battery):
+  - RSS after 0/10/20/30 scenes: 73.1/74.2/76.7/76.9 MB (heavy test run).
+  - From scene 10 to 30, a client per scene grew 0.8 and 1.3 MB (scratch runs). The old pattern (one client, textures re-applied) grew 18.4 and 18.2 MB, about 0.9 MB per scene.
+  - The test allows 8 MB (ASSUMPTION, between the two).
+- Tests: `tests/test_sim/test_generator.py` (fast, 160x90: same args identical, workers 1 = 2, written labels = in-memory labels, empty label file only for negatives, always-ambiguous labeller writes nothing, resume, refused arguments, failing scene) and `tests/test_sim/test_generator_scenes.py` (`NIDAR_SCENE_TESTS=1`: replay, memory).
 
 **Known open defects on `main`:**
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
@@ -128,8 +140,8 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Saturated floor colours: texture colours are sampled per RGB channel independently, so the wider floor ranges also give strongly tinted floors (for example purple, green).
 - Walls darker than floors under the overhead light: lighting gain about 0.40 on walls vs 0.97 on the floor (default light, measured 1 Nov 2026). This comes from the light geometry; the light direction is unchanged.
 - Raw non-metric depth: `camera.py` returns the raw depth buffer, not metres, although documented as linear.
-- Texture memory growth: `randomize.py` loads new textures every sequence and never frees them.
-- No frame/dataset generator: nothing yet passes survivors to the sampler or writes a dataset. This is the next task (Task 3); see Planned.
+- Texture memory growth: `randomize.py` loads new textures every sequence and never frees them (about 0.9 MB per scene when one client is reused). `sim/generator.py` (branch `feat/generator`) avoids it with a new client per scene; `randomize.py` itself is unchanged.
+- No frame/dataset generator on `main`: built on branch `feat/generator` (see above), not merged.
 - `check.ps1 -Full` fails on a fresh clone: the 4 live-output tests in `test_detection_output.py` skip ("No live detections.jsonl found") until the baseline detector has written its output under the gitignored `outputs/` (seen in a `git archive` copy, 1 Nov 2026).
 
 **Removed:** `gcs/` (ground-station stubs, out of scope). `AGENTS.md` (this file is the only agent context).
@@ -151,7 +163,7 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 ```
 configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
 cv/                 [exists] config.py, logger.py, detectors/, utils/ (empty). [PLANNED] eval/, tracking/, train/, depth, detector_api.py
-sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (scenes, modes, retries), layouts/. [PLANNED] clutter
+sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (dataset runs), layouts/. [PLANNED] clutter
 data_tools/         [PLANNED] cutouts, compositor, dataset builder, inspection
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
@@ -169,6 +181,7 @@ data/  models/  outputs/   [exist, gitignored, never committed]. data/test_real/
 pip install -r requirements/requirements-dev.txt              # dev laptop setup (install torch first, see README §4)
 pre-commit install                                            # once per clone: ruff hook on every commit
 python scripts/check_env.py                                   # environment health
+python -m sim.generator --out data/sim_raw/run1 --scenes 40 --frames-per-scene 12 --seed 2026 --workers 4   # synthetic dataset (re-run resumes)
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)

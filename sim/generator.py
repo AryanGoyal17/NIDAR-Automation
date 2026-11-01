@@ -26,28 +26,52 @@ Determinism: everything for a scene is a pure function of (master seed,
 scene index, config). Every random stream has its own seed from
 :func:`derive_seed`, so the same master seed gives different poses in
 different scenes and layouts. Each scene uses its own PyBullet DIRECT client,
-disconnected at the end (this also frees the scene's textures).
+disconnected at the end (this also frees the scene's textures). Scenes run
+one per worker task, so the output is identical for any worker count (only
+the ``timing`` fields differ).
+
+Run layout (``--out``)::
+
+    images/<scene>_f<frame>.jpg    labels/<scene>_f<frame>.txt (YOLO, class 0)
+    scenes/<scene>.jsonl           meta lines of the scene's written frames
+    scenes/<scene>.attempts.jsonl  every attempt (rendered or not)
+    scenes/<scene>.done.json       scene summary, written last: scene complete
+    scenes/<scene>.failed.json     traceback of a failed scene (no done.json)
+    meta.jsonl, attempts.jsonl     merged in scene order at the end of a run
+    run.json, manifest.json        run arguments; counts, timing, versions
+
+Every file is written to a temporary name and renamed. Re-running the same
+command skips scenes with a ``done.json`` and retries failed ones.
+:func:`replay_frame` re-renders a written frame from its meta line alone.
 
 Usage::
 
-    from sim.generator import GeneratorConfig, Scene, plan_scene
-    cfg = GeneratorConfig.from_yaml()
-    with Scene(plan_scene(cfg, master_seed=7, scene_index=0), cfg) as scene:
-        frame = scene.generate_frame(0)
+    python -m sim.generator --out data/sim_raw/run1 --scenes 40 --frames-per-scene 12 \\
+        --seed 2026 --workers 4 --config configs/generator.yaml
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import importlib.metadata
+import json
 import logging
 import math
+import multiprocessing
+import os
+import platform
 import random
+import subprocess
+import sys
 import time
+import traceback
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import pybullet as p
 
@@ -623,3 +647,600 @@ def pose_dict(pose: CameraPose) -> dict[str, float]:
         "pitch": pose.pitch,
         "roll": pose.roll,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Writing a scene
+# --------------------------------------------------------------------------- #
+RUN_FILE = "run.json"
+MANIFEST_FILE = "manifest.json"
+META_FILE = "meta.jsonl"
+ATTEMPTS_FILE = "attempts.jsonl"
+
+PIXEL_CONVENTION = (
+    "origin top-left, x right, y down; continuous pixel edges: pixel (i, j) spans "
+    "[i, i+1] x [j, j+1], so a box over pixels xs.min()..xs.max() is "
+    "[xs.min(), xs.max()+1]; principal point (cx, cy) = (W/2, H/2)"
+)
+POSE_CONVENTION = (
+    "world x east, y north, z up (metres); yaw deg from +x towards +y; pitch deg, "
+    "negative = down; roll deg about the optical axis; axes as sim.camera.camera_axes"
+)
+
+
+class RunMismatchError(RuntimeError):
+    """The output directory holds a run made with other arguments or config."""
+
+
+def frame_id(scene_index: int, frame_index: int) -> str:
+    """``s00000_f000``-style id of a frame slot."""
+    return f"{scene_id(scene_index)}_f{frame_index:03d}"
+
+
+def _normalised_text(path: str | Path) -> str:
+    return Path(path).read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def config_hash(cfg: GeneratorConfig) -> str:
+    """sha256 of the effective generator config and the arena and randomization files."""
+    h = hashlib.sha256()
+    h.update(json.dumps(asdict(cfg), sort_keys=True).encode("utf-8"))
+    h.update(_normalised_text(cfg.arena_config).encode("utf-8"))
+    h.update(_normalised_text(cfg.randomization_config).encode("utf-8"))
+    return h.hexdigest()
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write to a temporary file in the same folder, then rename over ``path``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    atomic_write_bytes(path, text.encode("utf-8"))
+
+
+def _jsonl(rows: list[dict[str, Any]]) -> str:
+    return "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+
+
+def encode_jpeg(image: np.ndarray, quality: int) -> bytes:
+    """JPEG bytes of a BGR image (OpenCV)."""
+    ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
+    if not ok:
+        raise RuntimeError("JPEG encoding failed")
+    return buf.tobytes()
+
+
+def yolo_text(labels: list[SurvivorLabel]) -> str:
+    """YOLO label file content (same format as :func:`sim.labels.save_yolo_labels`)."""
+    return "".join(label.to_yolo_line() + "\n" for label in labels)
+
+
+def _scene_files(out_dir: Path, sid: str) -> list[Path]:
+    files = list((out_dir / "images").glob(f"{sid}_*"))
+    files += list((out_dir / "labels").glob(f"{sid}_*"))
+    files += list((out_dir / "scenes").glob(f"{sid}.*"))
+    return files
+
+
+def remove_scene_files(out_dir: Path, sid: str) -> None:
+    """Remove every file of a scene (stale output of an interrupted or failed run)."""
+    for path in _scene_files(out_dir, sid):
+        path.unlink(missing_ok=True)
+
+
+def scene_info(scene: Scene) -> dict[str, Any]:
+    """Scene part of a meta line: layout, seeds, camera, light, survivors."""
+    plan, cfg, prm, cam = scene.plan, scene.cfg, scene.params, scene.camera
+    return {
+        "scene_id": plan.scene_id,
+        "group_id": plan.scene_id,
+        "scene_index": plan.scene_index,
+        "master_seed": plan.master_seed,
+        "layout": {
+            "name": plan.layout_name,
+            "source": plan.layout_source,
+            "seed": plan.layout_seed,
+            "rows": len(plan.grid),
+            "cols": len(plan.grid[0]),
+            "cell_size_m": scene.maze.cell_size,
+            "grid": list(plan.grid),
+        },
+        "scene_seeds": dict(plan.seeds),
+        "camera": {
+            "width": cfg.width,
+            "height": cfg.height,
+            "vfov_deg": cam.vertical_fov_deg,
+            "hfov_deg": 2.0 * scene.half_hfov_deg,
+            **scene.intrinsics(),
+            "near_clip_m": cam.near_clip,
+            "far_clip_m": cam.far_clip,
+            "pixel_convention": PIXEL_CONVENTION,
+            "pose_convention": POSE_CONVENTION,
+        },
+        "light": {
+            "direction": prm.light_direction,
+            "color": prm.light_color,
+            "distance": prm.light_distance,
+            "ambient_coeff": prm.ambient_coeff,
+            "diffuse_coeff": prm.diffuse_coeff,
+            "specular_coeff": prm.specular_coeff,
+            "shadow": prm.shadow,
+            "wall_texture": prm.wall_texture_type,
+            "floor_texture": prm.floor_texture_type,
+        },
+        "low_light": prm.is_low_light,
+        "survivors_requested": plan.n_survivors,
+        "survivors": [
+            {
+                "index": i,
+                "posture": s.posture,
+                "cell": list(s.cell),
+                "world_pos_m": list(s.world_pos),
+                "yaw_deg": s.yaw_deg,
+                "scale": s.scale,
+                "aabb_m": [list(s.aabb[0]), list(s.aabb[1])],
+            }
+            for i, s in enumerate(scene.survivors)
+        ],
+    }
+
+
+def frame_meta(scene: Scene, result: FrameResult, base: dict[str, Any]) -> dict[str, Any]:
+    """Meta line of an accepted frame."""
+    plan = scene.plan
+    fid = frame_id(plan.scene_index, result.frame_index)
+    final = result.attempts[-1]
+    assert result.labels is not None and result.pose is not None
+    return {
+        **base,
+        "frame_id": fid,
+        "frame_index": result.frame_index,
+        "image": f"images/{fid}.jpg",
+        "label": f"labels/{fid}.txt",
+        "jpeg_quality": scene.cfg.jpeg_quality,
+        "frame_seeds": {
+            "mode": derive_seed(plan.master_seed, plan.scene_index, "mode", result.frame_index),
+            "pose": final["pose_seed"],
+            "augment": final["augment_seed"],
+        },
+        "mode": result.mode,
+        "outcome": result.outcome,
+        "target": result.target,
+        "retries": len(result.attempts) - 1,
+        "retry_reasons": [a["reason"] for a in result.attempts[:-1]],
+        "rejected_attempts": [
+            {k: a.get(k) for k in ("attempt", "reason", "outcome", "pose", "kept", "dropped")}
+            for a in result.attempts[:-1]
+        ],
+        "pose": pose_dict(result.pose),
+        "labels": final["kept"],
+        "dropped": final["dropped"],
+        "timing": {
+            **final["timing"],
+            "all_attempts_ms": sum(sum(a.get("timing", {}).values()) for a in result.attempts),
+        },
+    }
+
+
+def write_scene(
+    plan: ScenePlan,
+    cfg: GeneratorConfig,
+    out_dir: Path,
+    frames_per_scene: int,
+    chash: str,
+    frame_callback: Any = None,
+) -> dict[str, Any]:
+    """
+    Generate and write one scene; returns its summary (also written as done.json).
+
+    ``frame_callback(result, meta)`` is called for every accepted frame
+    before it is written (tests compare in-memory and written labels with it).
+    """
+    sid = plan.scene_id
+    remove_scene_files(out_dir, sid)
+    t0, c0 = time.perf_counter(), time.process_time()
+    metas: list[dict[str, Any]] = []
+    attempts: list[dict[str, Any]] = []
+    skipped: Counter[str] = Counter()
+    with Scene(plan, cfg) as scene:
+        base = {**scene_info(scene), "config_hash": chash}
+        for f in range(frames_per_scene):
+            result = scene.generate_frame(f)
+            for a in result.attempts:
+                attempts.append(
+                    {
+                        "scene_id": sid,
+                        "frame_index": f,
+                        "mode": result.mode,
+                        "frame_written": result.accepted,
+                        "skip_reason": result.skip_reason,
+                        "low_light": scene.params.is_low_light,
+                        "n_survivors": len(scene.survivors),
+                        **a,
+                    }
+                )
+            if not result.accepted:
+                skipped[result.skip_reason or "unknown"] += 1
+                continue
+            meta = frame_meta(scene, result, base)
+            if frame_callback is not None:
+                frame_callback(result, meta)
+            assert result.image is not None and result.labels is not None
+            atomic_write_bytes(out_dir / meta["image"], encode_jpeg(result.image, cfg.jpeg_quality))
+            atomic_write_text(out_dir / meta["label"], yolo_text(result.labels.labels))
+            metas.append(meta)
+        n_placed = len(scene.survivors)
+        low_light = scene.params.is_low_light
+
+    phase: Counter[str] = Counter()
+    for a in attempts:
+        phase.update(a.get("timing", {}))
+    summary = {
+        "scene_id": sid,
+        "scene_index": plan.scene_index,
+        "status": "done",
+        "layout": plan.layout_name,
+        "survivors": n_placed,
+        "low_light": low_light,
+        "frames_written": len(metas),
+        "positives": sum(m["outcome"] == POSITIVE for m in metas),
+        "negatives": sum(m["outcome"] == NEGATIVE for m in metas),
+        "labels": sum(len(m["labels"]) for m in metas),
+        "written_by_mode": dict(sorted(Counter(m["mode"] for m in metas).items())),
+        "skipped": dict(sorted(skipped.items())),
+        "attempts": len(attempts),
+        "render_attempts": sum(a.get("outcome") is not None for a in attempts),
+        "retry_reasons": dict(
+            sorted(Counter(a["reason"] for a in attempts if a["reason"] is not None).items())
+        ),
+        "timing": {
+            "wall_s": time.perf_counter() - t0,
+            "cpu_s": time.process_time() - c0,
+            "pid": os.getpid(),
+            "phase_ms_total": dict(phase),
+        },
+    }
+    scenes_dir = out_dir / "scenes"
+    atomic_write_text(scenes_dir / f"{sid}.jsonl", _jsonl(metas))
+    atomic_write_text(scenes_dir / f"{sid}.attempts.jsonl", _jsonl(attempts))
+    atomic_write_text(scenes_dir / f"{sid}.done.json", json.dumps(summary, sort_keys=True))
+    log.info(
+        f"{sid} done: {plan.layout_name}, {n_placed} survivors, {len(metas)}/{frames_per_scene} "
+        f"frames, {summary['render_attempts']} renders, {summary['timing']['wall_s']:.1f} s"
+    )
+    return summary
+
+
+@dataclass(frozen=True)
+class SceneTask:
+    """Everything a worker needs to write one scene."""
+
+    cfg: GeneratorConfig
+    out_dir: str
+    master_seed: int
+    scene_index: int
+    frames_per_scene: int
+    chash: str
+
+
+def run_scene_task(task: SceneTask) -> dict[str, Any]:
+    """
+    Worker entry: write one scene, or record its failure.
+
+    Any exception is caught: the traceback is logged and written to
+    ``scenes/<scene>.failed.json``, the scene's partial files are removed and
+    no done.json is written, so a re-run retries the scene.
+    """
+    out_dir = Path(task.out_dir)
+    sid = scene_id(task.scene_index)
+    try:
+        plan = plan_scene(task.cfg, task.master_seed, task.scene_index)
+        return write_scene(plan, task.cfg, out_dir, task.frames_per_scene, task.chash)
+    except Exception as exc:  # noqa: BLE001 - one bad scene must not stop the run
+        tb = traceback.format_exc()
+        log.error(f"{sid} failed: {exc!r}\n{tb}")
+        remove_scene_files(out_dir, sid)
+        failure = {
+            "scene_id": sid,
+            "scene_index": task.scene_index,
+            "status": "failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "traceback": tb,
+        }
+        atomic_write_text(out_dir / "scenes" / f"{sid}.failed.json", json.dumps(failure))
+        return failure
+
+
+# --------------------------------------------------------------------------- #
+# Run
+# --------------------------------------------------------------------------- #
+def power_state() -> str:
+    """Active power plan and AC state (Windows), e.g. ``power plan Balanced, plugged in (AC)``."""
+    if platform.system() != "Windows":
+        return "TBD (power plan only read on Windows)"
+    try:
+        out = subprocess.run(
+            ["powercfg", "/getactivescheme"], capture_output=True, text=True, timeout=20
+        ).stdout.strip()
+        plan = out.split("(")[-1].rstrip(")") if "(" in out else out
+        status = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_Battery).BatteryStatus",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"TBD (could not read power state: {exc})"
+    ac = {
+        "": "no battery reported",
+        "1": "on battery",
+        "2": "plugged in (AC)",
+        "3": "plugged in (AC, fully charged)",
+        "6": "plugged in (AC, charging)",
+    }.get(status, f"BatteryStatus={status}")
+    return f"power plan {plan}, {ac}"
+
+
+def _git(*args: str) -> str:
+    try:
+        return subprocess.run(
+            ["git", *args], capture_output=True, text=True, timeout=20
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "TBD"
+
+
+def library_versions() -> dict[str, str]:
+    versions = {"python": platform.python_version()}
+    for name in ("numpy", "opencv-python", "pybullet", "PyYAML"):
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[name] = "not installed"
+    return versions
+
+
+def run_record(
+    cfg: GeneratorConfig, scenes: int, frames_per_scene: int, seed: int, config_path: str
+) -> dict[str, Any]:
+    """What makes a run: compared on resume (the worker count is not part of it)."""
+    return {
+        "seed": seed,
+        "scenes": scenes,
+        "frames_per_scene": frames_per_scene,
+        "config_path": str(config_path),
+        "config_hash": config_hash(cfg),
+        "generator_config": json.loads(json.dumps(asdict(cfg))),
+    }
+
+
+def _done_path(out: Path, index: int) -> Path:
+    return out / "scenes" / f"{scene_id(index)}.done.json"
+
+
+def _merge(out: Path, done: list[int], suffix: str, target: str) -> None:
+    parts = [(out / "scenes" / f"{scene_id(i)}{suffix}").read_text(encoding="utf-8") for i in done]
+    atomic_write_text(out / target, "".join(parts))
+
+
+def _counter_sum(rows: list[dict[str, Any]], key: str) -> Counter[str]:
+    c: Counter[str] = Counter()
+    for r in rows:
+        c.update(r[key])
+    return c
+
+
+def generate(
+    out_dir: str | Path,
+    scenes: int,
+    frames_per_scene: int,
+    seed: int,
+    workers: int = 1,
+    cfg: GeneratorConfig | None = None,
+    config_path: str | Path = DEFAULT_GENERATOR_CONFIG,
+) -> dict[str, Any]:
+    """
+    Generate (or resume) a run and return its manifest.
+
+    Scenes with a done.json are skipped; the others (new, interrupted or
+    failed earlier) are generated. ``workers`` > 1 uses a spawn process pool,
+    one scene per task. Raises :class:`RunMismatchError` if ``out_dir`` holds
+    a run with other arguments or config.
+    """
+    cfg = cfg if cfg is not None else GeneratorConfig.from_yaml(config_path)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    record = run_record(cfg, scenes, frames_per_scene, seed, str(config_path))
+    run_path = out / RUN_FILE
+    if run_path.exists():
+        previous = json.loads(run_path.read_text(encoding="utf-8"))
+        if previous != record:
+            diff = sorted(k for k in record if previous.get(k) != record[k])
+            raise RunMismatchError(
+                f"{out} holds a run with other arguments or config (differs in: {diff}); "
+                "use another --out"
+            )
+    else:
+        atomic_write_text(run_path, json.dumps(record, indent=2, sort_keys=True))
+
+    power_start = power_state()
+    log.info(
+        f"generator start: {out}, {scenes} scenes x {frames_per_scene} frames, seed {seed}, "
+        f"workers {workers}; {power_start}"
+    )
+    pending = [i for i in range(scenes) if not _done_path(out, i).exists()]
+    tasks = [
+        SceneTask(cfg, str(out), seed, i, frames_per_scene, record["config_hash"]) for i in pending
+    ]
+
+    t0 = time.perf_counter()
+    if workers <= 1:
+        results = [run_scene_task(t) for t in tasks]
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(processes=workers) as pool:
+            results = list(pool.imap_unordered(run_scene_task, tasks))
+    wall_s = time.perf_counter() - t0
+    power_end = power_state()
+
+    done = [i for i in range(scenes) if _done_path(out, i).exists()]
+    _merge(out, done, ".jsonl", META_FILE)
+    _merge(out, done, ".attempts.jsonl", ATTEMPTS_FILE)
+    summaries = [json.loads(_done_path(out, i).read_text(encoding="utf-8")) for i in done]
+    failed = sorted(
+        (
+            {"scene_id": r["scene_id"], "error": r["error"]}
+            for r in results
+            if r["status"] == "failed"
+        ),
+        key=lambda r: r["scene_id"],
+    )
+    ran = [r for r in results if r["status"] == "done"]
+
+    phase = _counter_sum([r["timing"] for r in ran], "phase_ms_total")
+    renders_now = sum(r["render_attempts"] for r in ran)
+    frames_now = sum(r["frames_written"] for r in ran)
+    per_worker: dict[str, dict[str, float]] = {}
+    for r in ran:
+        w = per_worker.setdefault(
+            str(r["timing"]["pid"]), {"scenes": 0, "cpu_s": 0.0, "busy_wall_s": 0.0}
+        )
+        w["scenes"] += 1
+        w["cpu_s"] += r["timing"]["cpu_s"]
+        w["busy_wall_s"] += r["timing"]["wall_s"]
+    for w in per_worker.values():
+        w["cpu_s_per_run_wall_s"] = w["cpu_s"] / wall_s if wall_s > 0 else 0.0
+
+    manifest = {
+        "git_commit": _git("rev-parse", "HEAD"),
+        "git_dirty": bool(_git("status", "--porcelain")),
+        "config_hash": record["config_hash"],
+        "arguments": {
+            "out": str(out),
+            "scenes": scenes,
+            "frames_per_scene": frames_per_scene,
+            "seed": seed,
+            "workers": workers,
+            "config": str(config_path),
+        },
+        "generator_config": record["generator_config"],
+        "library_versions": library_versions(),
+        "counts": {
+            "scenes_requested": scenes,
+            "scenes_done": len(done),
+            "scenes_resumed": scenes - len(pending),
+            "scenes_run_now": len(ran),
+            "failed_scenes": len(failed),
+            "frame_slots": len(done) * frames_per_scene,
+            "frames_written": sum(s["frames_written"] for s in summaries),
+            "positives": sum(s["positives"] for s in summaries),
+            "negatives": sum(s["negatives"] for s in summaries),
+            "labels": sum(s["labels"] for s in summaries),
+            "attempts": sum(s["attempts"] for s in summaries),
+            "render_attempts": sum(s["render_attempts"] for s in summaries),
+            "written_by_mode": dict(sorted(_counter_sum(summaries, "written_by_mode").items())),
+            "skipped_by_reason": dict(sorted(_counter_sum(summaries, "skipped").items())),
+            "retries_by_reason": dict(sorted(_counter_sum(summaries, "retry_reasons").items())),
+        },
+        "failed_scenes": failed,
+        "timing": {
+            "note": "this invocation only (resumed scenes excluded)",
+            "power_start": power_start,
+            "power_end": power_end,
+            "workers": workers,
+            "cpu_count": os.cpu_count(),
+            "wall_s": wall_s,
+            "frames_written": frames_now,
+            "render_attempts": renders_now,
+            "frames_per_s": frames_now / wall_s if wall_s > 0 else 0.0,
+            "render_attempts_per_s": renders_now / wall_s if wall_s > 0 else 0.0,
+            "phase_ms_mean_per_render_attempt": (
+                {k: v / renders_now for k, v in sorted(phase.items())} if renders_now else {}
+            ),
+            "per_worker": per_worker,
+        },
+    }
+    atomic_write_text(out / MANIFEST_FILE, json.dumps(manifest, indent=2, sort_keys=True))
+    log.info(
+        f"generator end: {len(done)}/{scenes} scenes done, {len(failed)} failed, "
+        f"{frames_now} frames in {wall_s:.1f} s "
+        f"({manifest['timing']['frames_per_s']:.2f} frames/s); {power_end}"
+    )
+    return manifest
+
+
+# --------------------------------------------------------------------------- #
+# Replay
+# --------------------------------------------------------------------------- #
+def plan_from_meta(meta: dict[str, Any]) -> ScenePlan:
+    """The scene plan recorded in a meta line."""
+    layout = meta["layout"]
+    return ScenePlan(
+        master_seed=int(meta["master_seed"]),
+        scene_index=int(meta["scene_index"]),
+        layout_name=layout["name"],
+        layout_source=layout["source"],
+        grid=tuple(layout["grid"]),
+        layout_seed=layout["seed"],
+        n_survivors=int(meta["survivors_requested"]),
+        seeds={k: int(v) for k, v in meta["scene_seeds"].items()},
+    )
+
+
+def replay_frame(meta: dict[str, Any], cfg: GeneratorConfig) -> tuple[bytes, FrameLabels]:
+    """
+    Re-render a written frame from its meta line alone: JPEG bytes and labels.
+
+    Uses the recorded layout grid, scene seeds, pose and augmentation seed;
+    ``cfg`` must have the recorded config hash.
+    """
+    if config_hash(cfg) != meta["config_hash"]:
+        raise RunMismatchError("config differs from the one recorded in the meta line")
+    pose = CameraPose(**meta["pose"])
+    with Scene(plan_from_meta(meta), cfg) as scene:
+        rendered = scene.render_attempt(pose, int(meta["frame_seeds"]["augment"]))
+    return encode_jpeg(rendered.image, int(meta["jpeg_quality"])), rendered.labels
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="NIDAR synthetic dataset generator")
+    parser.add_argument("--out", required=True, help="Run directory, e.g. data/sim_raw/run1")
+    parser.add_argument("--scenes", type=int, required=True, help="Number of scenes")
+    parser.add_argument("--frames-per-scene", type=int, required=True, help="Frame slots per scene")
+    parser.add_argument("--seed", type=int, required=True, help="Master seed")
+    parser.add_argument("--workers", type=int, default=1, help="Worker processes")
+    parser.add_argument("--config", default=str(DEFAULT_GENERATOR_CONFIG), help="Generator config")
+    args = parser.parse_args(argv)
+
+    try:
+        manifest = generate(
+            args.out,
+            scenes=args.scenes,
+            frames_per_scene=args.frames_per_scene,
+            seed=args.seed,
+            workers=args.workers,
+            config_path=args.config,
+        )
+    except RunMismatchError as exc:
+        log.error(str(exc))
+        return 2
+    for failure in manifest["failed_scenes"]:
+        log.error(f"failed scene {failure['scene_id']}: {failure['error']}")
+    return 1 if manifest["failed_scenes"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
