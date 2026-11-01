@@ -96,6 +96,13 @@ trajectory:
   # fraction of the image (too close for a useful frame)
   max_survivor_box_fraction: 0.5    # ASSUMPTION: no measured basis yet
 
+  # generate_sequence (replay and tracking tests only; training frames come
+  # from sample_poses)
+  min_sequence_frames: 20           # ASSUMPTION: about one 1.5 m cell at 0.08 m steps
+  rotate_in_place: true             # ASSUMPTION: at a survivor block, add in-place yaw frames
+  rotate_yaw_step_deg: 10           # ASSUMPTION: yaw step per in-place frame (degrees)
+  rotate_max_frames: 12             # ASSUMPTION: at most 12 in-place frames (120 degrees)
+
 # --- Survivor (Target) Specifications ----------------------------------------
 survivor:
   # Physical target nature ("human", "mannequin", or "dummy")

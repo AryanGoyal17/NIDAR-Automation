@@ -11,10 +11,23 @@ Validates:
 3. No pose closer than the survivor clearance to any survivor box.
 4. No eye inside a survivor box or inside any survivor body part's box.
 5. No pose where a survivor's projected box exceeds the configured fraction.
+6. generate_sequence: every sequence has at least min_sequence_frames frames or
+   was skipped with a reason that was logged; consecutive frames are adjacent;
+   no cell is re-entered; repeated (x, y, yaw) at most 2 % of all frames;
+   checks 3 to 5 hold for every sequence pose.
+
+Heavy (builds 160 scenes), so it is skipped in the default ``pytest`` run.
+Run it on its own:
+
+    $env:NIDAR_SCENE_TESTS = "1"; python -m pytest -q tests/test_sim/test_trajectory_scenes.py
+    NIDAR_SCENE_TESTS=1 python -m pytest -q tests/test_sim/test_trajectory_scenes.py   # bash
 """
 
 from __future__ import annotations
 
+import logging
+import math
+import os
 from dataclasses import dataclass, field
 
 import pybullet as p
@@ -24,13 +37,20 @@ from sim.camera import CameraPose
 from sim.layout_gen import MazeGenerator
 from sim.maze import MazeBuilder, load_layout
 from sim.survivor import SurvivorPlacer
-from sim.trajectory import TrajectorySampler, point_to_aabb_distance, pose_key
+from sim.trajectory import SequenceSkipped, TrajectorySampler, point_to_aabb_distance, pose_key
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("NIDAR_SCENE_TESTS") != "1",
+    reason="heavy 8 layouts x 20 seeds checks: set NIDAR_SCENE_TESTS=1 to run",
+)
 
 ARENA_CONFIG = "configs/arena.yaml"
 HANDMADE = ["straight_corridor", "l_turn", "t_junction", "dead_end", "two_rooms", "loop"]
 SEEDS = range(20)
 N_POSES = 60
 N_SURVIVORS = 3
+N_FRAMES = 60
+STEP_M = 0.08
 
 
 @dataclass
@@ -43,6 +63,18 @@ class Scene:
     part_boxes: list
     sampler: TrajectorySampler  # shared per layout; survivor_boxes set to the last seed
     poses: list[CameraPose] = field(default_factory=list)
+    sequence: list[CameraPose] = field(default_factory=list)
+    skip_reason: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+class _Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
 
 
 def _layouts() -> list[tuple[str, list[str]]]:
@@ -56,6 +88,8 @@ def _layouts() -> list[tuple[str, list[str]]]:
 @pytest.fixture(scope="module")
 def scenes() -> list[Scene]:
     builder, placer = MazeBuilder(ARENA_CONFIG), SurvivorPlacer(ARENA_CONFIG)
+    records = _Records()
+    logging.getLogger("nidar.trajectory").addHandler(records)
     out: list[Scene] = []
     for name, grid in _layouts():
         # One maze per layout; placement depends only on the seed, so survivors
@@ -80,9 +114,18 @@ def scenes() -> list[Scene]:
                     sampler=sampler,
                 )
                 scene.poses = sampler.sample_poses(N_POSES, seed=seed)
+                records.messages.clear()
+                try:
+                    scene.sequence = sampler.generate_sequence(
+                        num_frames=N_FRAMES, step_m=STEP_M, seed=seed
+                    )
+                except SequenceSkipped as skip:
+                    scene.skip_reason = skip.reason
+                scene.warnings = list(records.messages)
                 out.append(scene)
         finally:
             p.disconnect(cid)
+    logging.getLogger("nidar.trajectory").removeHandler(records)
     return out
 
 
@@ -130,3 +173,48 @@ def test_sample_poses_keep_clearance(scenes: list[Scene]) -> None:
 def test_sample_poses_box_fraction(scenes: list[Scene]) -> None:
     for s in scenes:
         _check_box_fraction(s, s.poses)
+
+
+# --------------------------------------------------------------------------- #
+# generate_sequence
+# --------------------------------------------------------------------------- #
+def test_sequence_min_length_or_logged_skip(scenes: list[Scene]) -> None:
+    for s in scenes:
+        if s.skip_reason is not None:
+            assert s.skip_reason and not s.sequence
+            assert any(s.skip_reason in m for m in s.warnings), f"{s.name} seed {s.seed}"
+        else:
+            assert s.sampler.min_sequence_frames <= len(s.sequence) <= N_FRAMES, (
+                f"{s.name} seed {s.seed}: {len(s.sequence)} frames"
+            )
+
+
+def test_sequence_frames_adjacent(scenes: list[Scene]) -> None:
+    for s in scenes:
+        for a, b in zip(s.sequence, s.sequence[1:], strict=False):
+            assert math.hypot(b.x - a.x, b.y - a.y) <= STEP_M + 1e-9, f"{s.name} seed {s.seed}"
+
+
+def test_sequence_never_reenters_a_cell(scenes: list[Scene]) -> None:
+    for s in scenes:
+        cs = s.sampler.cell_size
+        cells = [(int(q.y // cs), int(q.x // cs)) for q in s.sequence]
+        runs = [c for i, c in enumerate(cells) if i == 0 or c != cells[i - 1]]
+        assert len(runs) == len(set(runs)), f"{s.name} seed {s.seed}: {runs}"
+
+
+def test_sequence_repeats_at_most_two_percent(scenes: list[Scene]) -> None:
+    frames = sum(len(s.sequence) for s in scenes)
+    repeats = sum(len(s.sequence) - len({pose_key(q) for q in s.sequence}) for s in scenes)
+    assert frames > 0
+    assert repeats <= 0.02 * frames, f"{repeats} repeated of {frames}"
+
+
+def test_sequence_keeps_clearance(scenes: list[Scene]) -> None:
+    for s in scenes:
+        _check_clear(s, s.sequence)
+
+
+def test_sequence_box_fraction(scenes: list[Scene]) -> None:
+    for s in scenes:
+        _check_box_fraction(s, s.sequence)

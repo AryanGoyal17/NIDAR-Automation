@@ -12,8 +12,11 @@ constraints defined in ``configs/arena.yaml``:
   the camera to every survivor box, and a rejection when one survivor's
   projected box covers too much of the image. Both values come from the
   ``trajectory`` section of ``arena.yaml``.
-- Smooth trajectory generator producing temporally consecutive sequences of
-  poses suitable for multi-frame synthetic video generation.
+- Independent pose sampling (``sample_poses``): the source of training frames.
+- Consecutive sequence generator (``generate_sequence``) for replay and
+  tracking tests only: a self-avoiding walk over the corridor graph that stops
+  at a survivor's clearance boundary (optionally rotating in place) and never
+  returns fewer than ``trajectory.min_sequence_frames`` frames.
 
 Usage::
 
@@ -33,7 +36,7 @@ from __future__ import annotations
 import argparse
 import math
 import random
-from collections import Counter, deque
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -58,6 +61,14 @@ log = get_logger("trajectory")
 
 class PoseSamplingError(RuntimeError):
     """sample_poses could not find the requested number of valid unique poses."""
+
+
+class SequenceSkipped(RuntimeError):
+    """generate_sequence could not produce the minimum number of frames."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def pose_key(pose: CameraPose) -> tuple[float, float, int]:
@@ -116,6 +127,10 @@ class TrajectorySampler:
         self.min_wall_dist: float = float(min_wall_dist)
         self.survivor_clearance_m: float = float(cfg.trajectory.survivor_clearance_m)
         self.max_survivor_box_fraction: float = float(cfg.trajectory.max_survivor_box_fraction)
+        self.min_sequence_frames: int = int(cfg.trajectory.min_sequence_frames)
+        self.rotate_in_place: bool = bool(cfg.trajectory.rotate_in_place)
+        self.rotate_yaw_step_deg: float = float(cfg.trajectory.rotate_yaw_step_deg)
+        self.rotate_max_frames: int = int(cfg.trajectory.rotate_max_frames)
         # Projection only (no rendering): same FOV and aspect as the renders.
         self.camera = PinholeCamera(arena_config_path)
         self.survivor_boxes: list[AABB] = []
@@ -368,72 +383,127 @@ class TrajectorySampler:
             )
         return poses
 
-    # -- Smooth Trajectory Sequence Generation --
+    # -- Consecutive Sequence Generation (replay and tracking tests only) --
 
-    def _find_random_walk_path(
+    def _neighbours(self, cell: tuple[int, int]) -> list[tuple[int, int]]:
+        """Free 4-neighbours of a cell, in a fixed order."""
+        r, c = cell
+        out = []
+        for dr, dc in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < self.num_rows and 0 <= nc < self.num_cols:
+                if self.grid[nr][nc] in FREE_CHARS:
+                    out.append((nr, nc))
+        return out
+
+    def _segment_points(
+        self, a: tuple[int, int], b: tuple[int, int], step_m: float
+    ) -> list[tuple[float, float]]:
+        """Points from the centre of cell a (excluded) to the centre of cell b (included)."""
+        x0, y0 = self.cell_to_world_center(*a)
+        x1, y1 = self.cell_to_world_center(*b)
+        n_sub = max(1, int(round(math.hypot(x1 - x0, y1 - y0) / step_m)))
+        return [
+            (x0 + (x1 - x0) * k / n_sub, y0 + (y1 - y0) * k / n_sub) for k in range(1, n_sub + 1)
+        ]
+
+    def _walk(
         self,
-        min_length: int = 5,
-        rng: random.Random | None = None,
-    ) -> list[tuple[int, int]]:
+        start: tuple[int, int],
+        rng: random.Random,
+        num_frames: int,
+        min_frames: int,
+        step_m: float,
+        noise: tuple[float, float, float, float],
+    ) -> tuple[list[CameraPose], str]:
         """
-        Find a connected sequence of adjacent free cells using self-avoiding
-        random walk or BFS search.
-        """
-        if rng is None:
-            rng = random.Random()
+        One self-avoiding walk over the corridor graph from ``start``.
 
-        start = self.start_cell if self.start_cell else rng.choice(self.free_cells)
-        path = [start]
+        Returns the poses and why the walk ended.
+        """
+        height_noise, pitch_noise, yaw_noise, roll_noise = noise
+        poses: list[CameraPose] = []
         visited = {start}
+        cur = start
+        z = self.nominal_height
+        pitch = -self.nominal_tilt
+        yaw: float | None = None
 
-        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-
-        for _ in range(min_length * 3):
-            curr_r, curr_c = path[-1]
-            candidates = []
-            for dr, dc in directions:
-                nr, nc = curr_r + dr, curr_c + dc
-                if 0 <= nr < self.num_rows and 0 <= nc < self.num_cols:
-                    if self.grid[nr][nc] in FREE_CHARS and (nr, nc) not in visited:
-                        candidates.append((nr, nc))
-
-            if candidates:
-                nxt = rng.choice(candidates)
-                path.append(nxt)
-                visited.add(nxt)
-                if len(path) >= min_length:
-                    break
+        def make_pose(px: float, py: float, target_yaw: float) -> CameraPose:
+            nonlocal z, pitch, yaw
+            if yaw is None:
+                yaw = target_yaw
             else:
-                # If stuck, allow backtrack or stop
+                # Smooth angle interpolation (shortest angular distance)
+                diff = (target_yaw - yaw + 180.0) % 360.0 - 180.0
+                yaw = (yaw + 0.25 * diff) % 360.0
+            frame_yaw = (yaw + rng.uniform(-yaw_noise, yaw_noise)) % 360.0
+            z = min(max(z + rng.uniform(-height_noise, height_noise), 0.4), self.wall_height - 0.4)
+            pitch = min(max(pitch + rng.uniform(-pitch_noise, pitch_noise), -45.0), -15.0)
+            # Bank roll slightly into turns
+            delta_yaw = (target_yaw - yaw + 180.0) % 360.0 - 180.0
+            roll = -0.15 * delta_yaw + rng.uniform(-roll_noise, roll_noise)
+            return CameraPose(x=px, y=py, z=z, yaw=frame_yaw, pitch=pitch, roll=roll)
+
+        while True:
+            candidates = [n for n in self._neighbours(cur) if n not in visited]
+            if not candidates:
+                return poses, "no unvisited continuation"
+            clear = [
+                n
+                for n in candidates
+                if all(
+                    self.position_rejection(px, py, z) is None
+                    for px, py in self._segment_points(cur, n, step_m)
+                )
+            ]
+            # Until the minimum length is reached, avoid heading into a survivor.
+            nxt = rng.choice(clear if clear and len(poses) < min_frames else candidates)
+
+            cx, cy = self.cell_to_world_center(*cur)
+            nx, ny = self.cell_to_world_center(*nxt)
+            heading = math.degrees(math.atan2(ny - cy, nx - cx)) % 360.0
+            points = self._segment_points(cur, nxt, step_m)
+            if not poses:
+                points = [(cx, cy)] + points
+
+            for px, py in points:
+                pose = make_pose(px, py, heading)
+                reason = self.pose_rejection(pose)
+                if reason is not None:
+                    # Stop at the boundary: the last accepted pose.
+                    if poses and reason in (REJECT_SURVIVOR_CLEARANCE, REJECT_BOX_TOO_LARGE):
+                        poses.extend(self._rotate_in_place(poses[-1], rng, num_frames - len(poses)))
+                    return poses, f"blocked ({reason})"
+                poses.append(pose)
+                if len(poses) >= num_frames:
+                    return poses, "num_frames reached"
+
+            visited.add(nxt)
+            cur = nxt
+
+    def _rotate_in_place(self, last: CameraPose, rng: random.Random, room: int) -> list[CameraPose]:
+        """Yaw steps in place from ``last``; stops at the first rejected pose."""
+        if not self.rotate_in_place or room <= 0:
+            return []
+        # Never come back to a yaw already used at this position.
+        max_steps = max(0, math.ceil(360.0 / self.rotate_yaw_step_deg) - 1)
+        n = min(self.rotate_max_frames, max_steps, room)
+        direction = rng.choice((-1.0, 1.0))
+        out = []
+        for k in range(1, n + 1):
+            pose = CameraPose(
+                x=last.x,
+                y=last.y,
+                z=last.z,
+                yaw=(last.yaw + direction * k * self.rotate_yaw_step_deg) % 360.0,
+                pitch=last.pitch,
+                roll=last.roll,
+            )
+            if self.pose_rejection(pose) is not None:
                 break
-
-        # If walk was too short, find a longest shortest-path via BFS
-        if len(path) < 3:
-            path = self._bfs_farthest_path(start)
-
-        return path
-
-    def _bfs_farthest_path(self, start: tuple[int, int]) -> list[tuple[int, int]]:
-        """Find path to the farthest reachable cell from start using BFS."""
-        queue = deque([[start]])
-        visited = {start}
-        longest_path = [start]
-
-        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
-        while queue:
-            curr_path = queue.popleft()
-            if len(curr_path) > len(longest_path):
-                longest_path = curr_path
-
-            curr_r, curr_c = curr_path[-1]
-            for dr, dc in directions:
-                nr, nc = curr_r + dr, curr_c + dc
-                if 0 <= nr < self.num_rows and 0 <= nc < self.num_cols:
-                    if self.grid[nr][nc] in FREE_CHARS and (nr, nc) not in visited:
-                        visited.add((nr, nc))
-                        queue.append(curr_path + [(nr, nc)])
-
-        return longest_path
+            out.append(pose)
+        return out
 
     def generate_sequence(
         self,
@@ -444,117 +514,99 @@ class TrajectorySampler:
         pitch_noise: float = 1.5,
         yaw_noise: float = 3.0,
         roll_noise: float = 1.5,
+        start_cell: tuple[int, int] | None = None,
+        min_frames: int | None = None,
+        max_start_attempts: int = 20,
     ) -> list[CameraPose]:
         """
-        Generate a smooth consecutive sequence of camera poses along a corridor path.
+        Generate consecutive camera poses along the corridor graph.
+
+        For replay and tracking tests only; training frames come from
+        :meth:`sample_poses`.
+
+        The walk moves cell to cell through free 4-neighbours and never enters
+        a visited cell, so positions are not repeated. Every pose passes
+        :meth:`pose_rejection`. When the next pose would be too close to a
+        survivor (or its box too large in the image), the sequence stops at the
+        last accepted pose and, if ``trajectory.rotate_in_place`` is set, adds
+        up to ``rotate_max_frames`` in-place yaw steps of
+        ``rotate_yaw_step_deg`` (distinct frames). It also ends when there is
+        no unvisited neighbour or when ``num_frames`` is reached.
+
+        Start cells are tried in an order drawn from ``seed`` (or only
+        ``start_cell`` if given); the first walk reaching ``num_frames`` is
+        returned, otherwise the longest. Same seed, layout and survivor boxes
+        give the same sequence.
 
         Parameters
         ----------
         num_frames : int
-            Total number of consecutive poses/frames to generate.
+            Maximum number of frames.
         step_m : float
             Distance step in metres between consecutive frames.
         seed : int, optional
             Random seed for repeatability.
-        height_noise : float
-            Max altitude perturbation per frame.
-        pitch_noise : float
-            Max pitch perturbation in degrees.
-        yaw_noise : float
-            Max heading perturbation in degrees.
-        roll_noise : float
-            Max roll perturbation in degrees.
+        height_noise, pitch_noise, yaw_noise, roll_noise : float
+            Per-frame perturbations (metres, degrees).
+        start_cell : tuple[int, int], optional
+            Fixed start cell; otherwise valid cells are tried in seeded order.
+        min_frames : int, optional
+            Minimum length; defaults to ``trajectory.min_sequence_frames``
+            (capped at ``num_frames``).
+        max_start_attempts : int
+            Maximum number of start cells tried.
 
         Returns
         -------
         list[CameraPose]
-            Ordered list of consecutive poses simulating smooth drone flight.
+            Between ``min_frames`` and ``num_frames`` consecutive poses.
+
+        Raises
+        ------
+        SequenceSkipped
+            If no start cell gives ``min_frames`` frames. ``reason`` says why.
         """
         rng = random.Random(seed)
-        cell_path = self._find_random_walk_path(min_length=max(4, num_frames // 8), rng=rng)
+        min_len = min(num_frames, self.min_sequence_frames if min_frames is None else min_frames)
+        noise = (height_noise, pitch_noise, yaw_noise, roll_noise)
 
-        # Convert cells to world waypoints
-        waypoints = [self.cell_to_world_center(r, c) for r, c in cell_path]
+        if start_cell is not None:
+            starts = [start_cell]
+        else:
+            starts = [
+                cell
+                for cell in self.free_cells
+                if self.position_rejection(*self.cell_to_world_center(*cell), self.nominal_height)
+                is None
+            ]
+            rng.shuffle(starts)
+            starts = starts[:max_start_attempts]
 
-        # Interpolate waypoints with dense sampling
-        dense_points: list[tuple[float, float]] = []
-        for i in range(len(waypoints) - 1):
-            x0, y0 = waypoints[i]
-            x1, y1 = waypoints[i + 1]
-            seg_len = math.hypot(x1 - x0, y1 - y0)
-            n_sub = max(1, int(round(seg_len / step_m)))
-            for s in range(n_sub):
-                t = s / float(n_sub)
-                px = x0 + t * (x1 - x0)
-                py = y0 + t * (y1 - y0)
-                dense_points.append((px, py))
+        best: tuple[list[CameraPose], str, tuple[int, int]] | None = None
+        for start in starts:
+            walk_rng = random.Random(rng.getrandbits(64))
+            poses, end = self._walk(start, walk_rng, num_frames, min_len, step_m, noise)
+            if best is None or len(poses) > len(best[0]):
+                best = (poses, end, start)
+            if len(poses) >= num_frames:
+                break
 
-        # Include final waypoint
-        dense_points.append(waypoints[-1])
-
-        # If dense_points has fewer points than num_frames, extend along direction
-        while len(dense_points) < num_frames:
-            # Repeat or oscillate
-            dense_points.extend(reversed(dense_points[:-1]))
-
-        # Trim to exactly num_frames
-        points = dense_points[:num_frames]
-
-        # Compute smooth poses
-        poses: list[CameraPose] = []
-        nominal_z = self.nominal_height
-        nominal_pitch = -self.nominal_tilt
-
-        curr_z = nominal_z
-        curr_pitch = nominal_pitch
-        curr_yaw = 0.0
-
-        for i in range(len(points)):
-            px, py = points[i]
-
-            # Compute heading from path tangent
-            if i < len(points) - 1:
-                dx = points[i + 1][0] - px
-                dy = points[i + 1][1] - py
+        if best is None or len(best[0]) < min_len:
+            if best is None:
+                reason = "no valid start cell"
             else:
-                dx = px - points[i - 1][0]
-                dy = py - points[i - 1][1]
-
-            target_yaw = math.degrees(math.atan2(dy, dx)) % 360.0
-
-            if i == 0:
-                curr_yaw = target_yaw
-            else:
-                # Smooth angle interpolation (shortest angular distance)
-                diff = (target_yaw - curr_yaw + 180.0) % 360.0 - 180.0
-                curr_yaw = (curr_yaw + 0.25 * diff) % 360.0
-
-            # Add smooth small perturbations
-            jitter_y = rng.uniform(-yaw_noise, yaw_noise)
-            frame_yaw = (curr_yaw + jitter_y) % 360.0
-
-            curr_z += rng.uniform(-height_noise, height_noise)
-            curr_z = min(max(curr_z, 0.4), self.wall_height - 0.4)
-
-            curr_pitch += rng.uniform(-pitch_noise, pitch_noise)
-            curr_pitch = min(max(curr_pitch, -45.0), -15.0)
-
-            # Bank roll slightly into turns
-            delta_yaw = (target_yaw - curr_yaw + 180.0) % 360.0 - 180.0
-            bank_roll = -0.15 * delta_yaw
-            frame_roll = bank_roll + rng.uniform(-roll_noise, roll_noise)
-
-            poses.append(
-                CameraPose(
-                    x=px,
-                    y=py,
-                    z=curr_z,
-                    yaw=frame_yaw,
-                    pitch=curr_pitch,
-                    roll=frame_roll,
+                reason = (
+                    f"longest of {len(starts)} start cells has {len(best[0])} < {min_len} "
+                    f"frames (start {best[2]}, ended: {best[1]})"
                 )
-            )
+            log.warning(f"generate_sequence skipped: seed={seed}: {reason}")
+            raise SequenceSkipped(reason)
 
+        poses, end, start = best
+        log.info(
+            f"generate_sequence: seed={seed} frames={len(poses)}/{num_frames} start={start} "
+            f"ended: {end}"
+        )
         return poses
 
 

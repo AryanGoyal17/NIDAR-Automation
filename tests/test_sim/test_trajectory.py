@@ -11,6 +11,8 @@ Validates:
 6. Consecutive frames in generated sequences are spatially smooth and adjacent.
 7. Survivor checks: clearance and projected box size from arena.yaml, rejection
    reasons, counts in the log and in the error, determinism by seed.
+8. generate_sequence: stops at the clearance boundary and rotates in place, never
+   walks back, skips with a logged reason below the minimum, deterministic.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from sim.trajectory import (
     REJECT_SURVIVOR_CLEARANCE,
     REJECT_WALL,
     PoseSamplingError,
+    SequenceSkipped,
     TrajectorySampler,
     point_to_aabb_distance,
     pose_key,
@@ -183,4 +186,107 @@ class TestDeterminism:
         b = other.sample_poses(n=50, seed=11)
         assert [p.as_tuple() for p in a] == [p.as_tuple() for p in b]
         c = other.sample_poses(n=50, seed=12)
+        assert [p.as_tuple() for p in a] != [p.as_tuple() for p in c]
+
+
+# --------------------------------------------------------------------------- #
+# generate_sequence contract
+# --------------------------------------------------------------------------- #
+CORRIDOR = ["########", "#S.....#", "########"]
+# A standing-height box in the last corridor cell (centre x = 9.75 m, y = 2.25 m).
+STANDING_BOX = ((9.5, 2.0, 0.0), (10.0, 2.5, 1.75))
+
+
+def _corridor(boxes: list | None = None) -> TrajectorySampler:
+    return TrajectorySampler(CORRIDOR, arena_config_path=ARENA_CONFIG, survivor_boxes=boxes)
+
+
+class TestSequenceContract:
+    def test_stops_at_survivor_and_rotates(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.INFO, logger="nidar.trajectory")
+        s = _corridor([STANDING_BOX])
+        seq = s.generate_sequence(num_frames=200, seed=3, start_cell=(1, 1))
+        assert any("ended: blocked (" in r.getMessage() for r in caplog.records)
+        # Trailing in-place frames: same position, yaw stepping by rotate_yaw_step_deg.
+        last = seq[-1]
+        rot = [q for q in seq if (q.x, q.y) == (last.x, last.y)]
+        assert 2 <= len(rot) <= s.rotate_max_frames + 1
+        assert seq[-len(rot) :] == rot
+        for a, b in zip(rot, rot[1:], strict=False):
+            step = abs((b.yaw - a.yaw + 180.0) % 360.0 - 180.0)
+            assert step == pytest.approx(s.rotate_yaw_step_deg)
+        # Stopped at the survivor boundary: one more step along the corridor
+        # (same orientation) is rejected by a survivor rule.
+        stop = rot[0]
+        step = CameraPose(stop.x + 0.08, stop.y, stop.z, stop.yaw, stop.pitch, stop.roll)
+        assert s.pose_rejection(step) in (REJECT_SURVIVOR_CLEARANCE, REJECT_BOX_TOO_LARGE)
+        for q in seq:
+            assert s.pose_rejection(q) is None
+
+    def test_stops_within_one_step_of_clearance(self) -> None:
+        s = _corridor([STANDING_BOX])
+        s.max_survivor_box_fraction = 1.0  # isolate the clearance rule
+        s.rotate_in_place = False
+        seq = s.generate_sequence(num_frames=200, seed=3, start_cell=(1, 1))
+        last = seq[-1]
+        d = point_to_aabb_distance((last.x, last.y, last.z), STANDING_BOX)
+        assert s.survivor_clearance_m <= d < s.survivor_clearance_m + 0.08 + 1e-9
+
+    def test_no_rotation_when_disabled(self) -> None:
+        s = _corridor([STANDING_BOX])
+        s.rotate_in_place = False
+        seq = s.generate_sequence(num_frames=200, seed=3, start_cell=(1, 1))
+        assert (seq[-1].x, seq[-1].y) != (seq[-2].x, seq[-2].y)
+
+    def test_ends_without_walking_back(self, caplog: pytest.LogCaptureFixture) -> None:
+        caplog.set_level(logging.INFO, logger="nidar.trajectory")
+        s = _corridor()
+        seq = s.generate_sequence(num_frames=500, seed=0, start_cell=(1, 1))
+        assert any("ended: no unvisited continuation" in r.getMessage() for r in caplog.records)
+        xs = [q.x for q in seq]
+        assert xs == sorted(xs) and len(set(xs)) == len(xs)
+        assert len(seq) < 500
+
+    def test_too_short_is_skipped_with_logged_reason(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="nidar.trajectory")
+        s = _corridor([STANDING_BOX])
+        with pytest.raises(SequenceSkipped) as err:
+            s.generate_sequence(num_frames=500, seed=3, start_cell=(1, 1), min_frames=400)
+        assert err.value.reason
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(err.value.reason in m for m in warnings)
+
+    def test_never_one_frame(self) -> None:
+        # Start right next to the survivor: the default minimum still holds or it skips.
+        s = _corridor([STANDING_BOX])
+        for seed in range(10):
+            try:
+                seq = s.generate_sequence(num_frames=60, seed=seed)
+            except SequenceSkipped:
+                continue
+            assert len(seq) >= s.min_sequence_frames
+
+    def test_values_come_from_arena_yaml(self, sampler: TrajectorySampler) -> None:
+        from cv.config import load_config
+
+        cfg = load_config(ARENA_CONFIG).trajectory
+        assert sampler.min_sequence_frames == int(cfg.min_sequence_frames)
+        assert sampler.rotate_in_place == bool(cfg.rotate_in_place)
+        assert sampler.rotate_yaw_step_deg == float(cfg.rotate_yaw_step_deg)
+        assert sampler.rotate_max_frames == int(cfg.rotate_max_frames)
+
+
+class TestSequenceDeterminism:
+    def test_same_seed_same_sequence(self, survivor_sampler: TrajectorySampler) -> None:
+        other = TrajectorySampler(
+            SAMPLE_LAYOUT, arena_config_path=ARENA_CONFIG, survivor_boxes=[LYING_BOX]
+        )
+        for seed in (0, 7, 42):
+            a = survivor_sampler.generate_sequence(num_frames=60, seed=seed)
+            b = other.generate_sequence(num_frames=60, seed=seed)
+            assert [p.as_tuple() for p in a] == [p.as_tuple() for p in b]
+        a = survivor_sampler.generate_sequence(num_frames=60, seed=1)
+        c = survivor_sampler.generate_sequence(num_frames=60, seed=2)
         assert [p.as_tuple() for p in a] != [p.as_tuple() for p in c]
