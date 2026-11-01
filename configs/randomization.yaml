@@ -29,15 +29,18 @@ sequence:
       wall_color_min: [0.65, 0.65, 0.60]
       wall_color_max: [0.92, 0.90, 0.85]
       # Floor color range (RGB floats in [0.0, 1.0])
-      floor_color_min: [0.20, 0.20, 0.22]
-      floor_color_max: [0.45, 0.45, 0.48]
+      # ASSUMPTION: arena floor colour is unknown (CLAUDE.md §5), so span mid-dark to light.
+      # Was 0.20-0.48, which left 37 % of normal-light solid floors below grey 60.
+      floor_color_min: [0.30, 0.30, 0.32]
+      floor_color_max: [0.75, 0.75, 0.75]
 
     noise:
       # Base color range for textured noise
       wall_base_min: [0.60, 0.60, 0.58]
       wall_base_max: [0.88, 0.88, 0.85]
-      floor_base_min: [0.22, 0.22, 0.24]
-      floor_base_max: [0.42, 0.42, 0.45]
+      # ASSUMPTION: same reasoning as solid floor_color; was 0.22-0.45 (40 % below grey 60).
+      floor_base_min: [0.30, 0.30, 0.32]
+      floor_base_max: [0.70, 0.70, 0.70]
       # Standard deviation of pixel noise [0.0, 255.0]
       noise_std_range: [8.0, 28.0]
 

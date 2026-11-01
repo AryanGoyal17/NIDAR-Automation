@@ -194,21 +194,32 @@ class TestTexturedSurfaceBrightness:
     Textured floors and walls must not be darkened by the MazeBuilder base colour.
 
     All renders: 320x180, straight_corridor, pose (2.25, 2.25, 0.8, yaw 0, pitch -30),
-    3 renders in total. Thresholds come from outputs/scratch/floorfix/threshold_probe.py
+    5 renders in total. Thresholds come from outputs/scratch/floorfix/threshold_probe.py
     (1 Nov 2026), run at this size and pose with the camera's fixed default light:
 
     - k = 0.95 (relative): a solid texture of colour c rendered exactly like an untextured
       body of colour c (ratio 1.000 for floor and wall, 4 colour pairs). With the old
       behaviour (texture times MazeBuilder rgba) the ratio was 0.443-0.450 for the floor
       and 0.792-0.802 for the walls. 0.95 sits between 0.80 and 1.00.
+    - T_floor = 80: over 82 normal-light seeds (0-99), the textured floor grey with the fix
+      was 92.5-197.2; with the old behaviour 41.2-88.4. Seeds 7 and 9 are tested: fixed
+      92.5 and 121.9, old 41.2 and 54.9. 80 leaves 12 grey of margin under the darkest
+      fixed seed and is above the "too dark" cutoff of 60 used in the scene statistics.
+    - T_wall = 45: fixed wall grey over the same seeds was 48.8-87.8 (seeds 7 and 9: 63.8
+      and 60.6). The default overhead light gives vertical walls a lighting gain of only
+      about 0.40 (floor about 0.97), so walls stay darker than floors; that is the light
+      geometry, not the texture. Old wall values (39.0-69.8) overlap the fixed ones, so
+      the relative test, not T_wall, is what catches a darkened wall texture.
     - Low light stays dark on purpose: seed 0 is low-light; with its own sampled light the
-      floor was 25.7 and the wall 24.1. Over the 18 low-light seeds in 0-99 the floor was
-      11.0-36.1 and the wall 14.0-31.5. The test requires both below 60, the "too dark"
+      floor was 41.2 and the wall 24.1. Over the 18 low-light seeds in 0-99 the floor was
+      17.0-41.2 and the wall 14.0-31.5. The test requires both below 60, the "too dark"
       cutoff of the scene statistics.
     """
 
     WIDTH, HEIGHT = 320, 180
     K_RELATIVE = 0.95
+    T_FLOOR = 80.0
+    T_WALL = 45.0
     LOW_LIGHT_MAX = 60.0
 
     @pytest.fixture
@@ -267,6 +278,18 @@ class TestTexturedSurfaceBrightness:
                 f"(ratio {ratio:.3f}, expected within [{self.K_RELATIVE}, "
                 f"{1.0 / self.K_RELATIVE:.3f}])"
             )
+
+    @pytest.mark.parametrize("seed", [7, 9])
+    def test_randomised_textures_stay_bright(self, seq_rand: SequenceRandomizer, seed: int) -> None:
+        params = seq_rand.sample_sequence_params(seed=seed)
+        assert not params.is_low_light
+
+        floor, wall = self._surface_grey(
+            lambda maze, cid: seq_rand.apply_to_sim(maze, params, physics_client=cid)
+        )
+
+        assert floor >= self.T_FLOOR, f"Seed {seed}: textured floor grey {floor:.1f}"
+        assert wall >= self.T_WALL, f"Seed {seed}: textured wall grey {wall:.1f}"
 
     def test_low_light_scene_stays_dark(self, seq_rand: SequenceRandomizer) -> None:
         params = seq_rand.sample_sequence_params(seed=0)

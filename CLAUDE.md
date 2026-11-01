@@ -75,7 +75,7 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 - `randomize.py`: textures, lighting and frame augmentation.
 - `labels.py`: YOLO labels from segmentation masks.
 - `scripts/sim_preview.py`, `configs/arena.yaml`, `configs/randomization.yaml`.
-- pytest, 1 Nov 2026: 123 passed (branch `fix/floor-brightness`; `main` before it: 120).
+- pytest, 1 Nov 2026: 125 passed (branch `fix/floor-brightness`; `main` before it: 120).
 
 Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 Oct) and `outputs/scratch/fix_status_report.md` (1 Nov), gitignored, only on the owner's machine.
 
@@ -83,6 +83,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Light direction: `arena.yaml` and the randomiser now put the light above the floor (untextured floor grey 112, was 39). The specular coefficient now reaches the renderer.
 - Lint: ruff check 0 errors, ruff format 0 unformatted (46 files, measured 1 Nov 2026 on `main`). Enforced by the pre-commit hook (ruff 0.16.10, run `pre-commit install` once per clone) and `scripts/check.ps1`.
 - Textured surfaces darkened by the body colour: `apply_to_sim` now resets the floor and wall `rgbaColor` to white, so the texture alone sets the albedo (it was multiplied by 0.45 on the floor, 0.80 on walls). Normal-light floor grey over 200 randomised scenes: mean 40.5 → 91.0 (branch `fix/floor-brightness`, measured 1 Nov 2026). Tested in `TestTexturedSurfaceBrightness`.
+- Dark floor texture ranges: `randomization.yaml` solid `floor_color` (was 0.20–0.48) and noise `floor_base` (was 0.22–0.45) widened to 0.30–0.75 and 0.30–0.70 (ASSUMPTION, arena floor colour unknown). With the reset, normal-light floor grey over 200 scenes: mean 91.0 → 109.5, share below 60: 18.3 % → 0.6 %, above 200: 0 %.
 
 **Only on the unmerged branch `fix/trajectory-clearance` (commit `0483528`), not on `main`:**
 - Survivor 3D clearance in `TrajectorySampler` (applies only when the caller passes the survivors), and survivors never placed on the start cell.
@@ -92,7 +93,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Camera inside survivors: no survivor clearance check, and survivors can sit on the start cell (22 of 160 test scenes).
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Truncation/occlusion always 0: `labels.py` never computes them, so its filters never fire.
-- Dark floor texture ranges: `randomization.yaml` solid `floor_color` 0.20–0.48 and noise `floor_base` 0.22–0.45 leave 37 % and 40 % of normal-light solid and noise floors below grey 60 (200 scenes, measured 1 Nov 2026).
+- Saturated floor colours: texture colours are sampled per RGB channel independently, so the wider floor ranges also give strongly tinted floors (for example purple, green).
 - Walls darker than floors under the overhead light: lighting gain about 0.40 on walls vs 0.97 on the floor (default light, measured 1 Nov 2026). This comes from the light geometry; the light direction is unchanged.
 - Raw non-metric depth: `camera.py` returns the raw depth buffer, not metres, although documented as linear.
 - Texture memory growth: `randomize.py` loads new textures every sequence and never frees them.
