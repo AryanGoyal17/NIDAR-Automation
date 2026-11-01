@@ -291,3 +291,82 @@ class TestBoxProjection:
         assert small.projected_box_fraction(pose, BOX_AABB) == pytest.approx(
             large.projected_box_fraction(pose, BOX_AABB)
         )
+
+    def test_project_box_corners_equals_project_aabb(self) -> None:
+        from sim.camera import _BOX_CORNER_BITS
+
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        corners = np.where(_BOX_CORNER_BITS, BOX_AABB[1], BOX_AABB[0])
+        for pose in PROJECTION_POSES:
+            for clip in (True, False):
+                assert cam.project_box(pose, corners, clip=clip) == cam.project_aabb(
+                    pose, BOX_AABB, clip=clip
+                )
+
+    def test_unclipped_extends_beyond_image(self) -> None:
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        rect = cam.project_aabb(STRADDLE_POSE, BOX_AABB, clip=False)
+        clipped = cam.project_aabb(STRADDLE_POSE, BOX_AABB)
+        assert rect is not None and clipped is not None
+        assert rect[0] < cam.width < rect[2]
+        assert clipped[2] == cam.width
+        assert rect[:2] == clipped[:2]
+
+
+# --------------------------------------------------------------------------- #
+# Segmentation canvas with margins
+# --------------------------------------------------------------------------- #
+# The box straddles the right image edge from this pose.
+STRADDLE_POSE = CameraPose(x=1.0, y=0.0, z=0.8, yaw=40.0, pitch=-20.0, roll=0.0)
+
+
+class TestCanvasRender:
+    @pytest.mark.parametrize(
+        "margins", [(0, 0, 0, 0), (40, 0, 0, 0), (0, 0, 64, 30), (17, 23, 5, 91), (50, 25, 50, 25)]
+    )
+    @pytest.mark.parametrize("pose", [PROJECTION_POSES[1], STRADDLE_POSE])
+    def test_crop_equals_frame_mask(self, box_scene, pose: CameraPose, margins) -> None:
+        cid, _ = box_scene
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        frame = cam.render(pose, physics_client=cid).seg_mask
+        canvas = cam.render_segmentation(pose, physics_client=cid, margins=margins)
+        left, top, right, bottom = margins
+        assert canvas.shape == (180 + top + bottom, 320 + left + right)
+        crop = canvas[top : top + 180, left : left + 320]
+        assert int((crop != frame).sum()) == 0
+
+    def test_margin_shows_the_part_outside_the_frame(self, box_scene) -> None:
+        cid, bid = box_scene
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        x1, y1, x2, y2 = cam.project_aabb(STRADDLE_POSE, BOX_AABB, clip=False)
+        pad = 2  # pixel rounding at the silhouette edge
+        margins = (
+            max(0, math.ceil(-x1) + pad),
+            max(0, math.ceil(-y1) + pad),
+            max(0, math.ceil(x2 - cam.width) + pad),
+            max(0, math.ceil(y2 - cam.height) + pad),
+        )
+        assert margins[2] > 0
+        canvas = cam.render_segmentation(STRADDLE_POSE, physics_client=cid, margins=margins)
+        ys, xs = np.nonzero((canvas & 0xFFFFFF) == bid)
+        # The silhouette continues into the right margin and stays inside the canvas.
+        assert xs.max() >= margins[0] + cam.width
+        assert xs.max() < canvas.shape[1] - 1
+        # Its box matches the unclipped projection, shifted by the margins.
+        mask_box = (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1)
+        shifted = (x1 + margins[0], y1 + margins[1], x2 + margins[0], y2 + margins[1])
+        for got, want in zip(shifted, mask_box, strict=True):
+            assert abs(got - want) <= 2.0, f"projected {shifted} vs canvas mask {mask_box}"
+
+    def test_zero_margin_matrix_equals_fov_matrix(self) -> None:
+        for w, h in ((320, 180), (640, 360), (1280, 720)):
+            cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=w, height=h)
+            np.testing.assert_allclose(
+                cam.canvas_projection_matrix((0, 0, 0, 0)), cam.projection_matrix, atol=1e-6
+            )
+
+    def test_negative_margin_rejected(self, box_scene) -> None:
+        cid, _ = box_scene
+        cam = PinholeCamera(arena_config_path=ARENA_CONFIG, width=320, height=180)
+        with pytest.raises(ValueError, match="margins"):
+            cam.render_segmentation(STRADDLE_POSE, physics_client=cid, margins=(0, -1, 0, 0))

@@ -18,7 +18,11 @@ Features:
     ``p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX``).
 - Built-in FPS benchmarking tool.
 - Projection of a world-frame 3D box to an image rectangle (``project_aabb``,
-  ``projected_box_fraction``), using the same axes as rendering (``camera_axes``).
+  ``project_box``, ``projected_box_fraction``), using the same axes as
+  rendering (``camera_axes``).
+- Segmentation-only render on a canvas extended by a margin on each side, with
+  the same focal length in pixels (``render_segmentation``): the central
+  ``height x width`` crop is pixel-identical to the frame.
 
 Coordinate conventions:
 - World axes: x = East/rightward, y = North/forward, z = Upward (ROS 2 REP 103).
@@ -272,6 +276,7 @@ class PinholeCamera:
         self,
         pose: CameraPose | tuple[float, float, float, float, float, float],
         aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+        clip: bool = True,
     ) -> tuple[float, float, float, float] | None:
         """
         Image-space bounding rectangle of a world-frame axis-aligned box.
@@ -285,13 +290,37 @@ class PinholeCamera:
         body, so the rectangle can be larger than the body's real silhouette
         box (never smaller, up to pixel rounding).
 
+        Parameters
+        ----------
+        clip : bool
+            If False, the rectangle is not clipped to the image and can extend
+            beyond it (or lie fully outside it).
+
         Returns
         -------
         (x1, y1, x2, y2) in float pixels, origin top-left, or None if no part
-        of the box is in front of the camera or inside the image.
+        of the box is in front of the camera (or, with ``clip``, inside the
+        image).
+        """
+        lo = np.asarray(aabb[0], dtype=np.float64)
+        hi = np.asarray(aabb[1], dtype=np.float64)
+        return self.project_box(pose, np.where(_BOX_CORNER_BITS, hi, lo), clip=clip)
+
+    def project_box(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        corners: np.ndarray,
+        clip: bool = True,
+    ) -> tuple[float, float, float, float] | None:
+        """
+        Image-space bounding rectangle of a world-frame box given by its corners.
+
+        Like :meth:`project_aabb` but for any box, including a rotated one.
+        ``corners`` is an (8, 3) array; corner c is the max side along the
+        box's local x, y, z axes where bits (c & 4, c & 2, c & 1) are set.
         """
         eye, basis = self._view_basis(pose)
-        return self._project_aabb_in_view(eye, basis, aabb)
+        return self._project_corners_in_view(eye, basis, np.asarray(corners, np.float64), clip)
 
     def projected_box_fraction(
         self,
@@ -348,7 +377,16 @@ class PinholeCamera:
         """:meth:`project_aabb` with a precomputed view basis."""
         lo = np.asarray(aabb[0], dtype=np.float64)
         hi = np.asarray(aabb[1], dtype=np.float64)
-        corners = np.where(_BOX_CORNER_BITS, hi, lo)
+        return self._project_corners_in_view(eye, basis, np.where(_BOX_CORNER_BITS, hi, lo))
+
+    def _project_corners_in_view(
+        self,
+        eye: np.ndarray,
+        basis: np.ndarray,
+        corners: np.ndarray,
+        clip: bool = True,
+    ) -> tuple[float, float, float, float] | None:
+        """:meth:`project_box` with a precomputed view basis."""
         cam = (corners - eye) @ basis.T
 
         # Keep corners in front of the near plane, plus the points where box
@@ -370,6 +408,8 @@ class PinholeCamera:
         u = (ndc_x + 1.0) * 0.5 * self.width
         v = (1.0 - ndc_y) * 0.5 * self.height
 
+        if not clip:
+            return (float(u.min()), float(v.min()), float(u.max()), float(v.max()))
         x1, x2 = max(float(u.min()), 0.0), min(float(u.max()), float(self.width))
         y1, y2 = max(float(v.min()), 0.0), min(float(v.max()), float(self.height))
         if x2 <= x1 or y2 <= y1:
@@ -464,6 +504,70 @@ class PinholeCamera:
         seg_arr = np.reshape(seg_buf, (h, w)).astype(np.int32)
 
         return RenderOutput(bgr=bgr_arr, depth=depth_arr, seg_mask=seg_arr)
+
+    @property
+    def focal_length_px(self) -> float:
+        """Focal length in pixels (square pixels, principal point at the image centre)."""
+        return (self.height / 2.0) / math.tan(math.radians(self.vertical_fov_deg) / 2.0)
+
+    def canvas_projection_matrix(self, margins: tuple[int, int, int, int]) -> list[float]:
+        """
+        Projection matrix for a canvas extended by ``(left, top, right, bottom)`` pixels.
+
+        The focal length in pixels and the pixel grid are those of the frame,
+        so the frame is the canvas crop ``[top:top + height, left:left + width]``.
+        """
+        left, top, right, bottom = margins
+        k = self.near_clip / self.focal_length_px
+        return list(
+            p.computeProjectionMatrix(
+                left=-(self.width / 2.0 + left) * k,
+                right=(self.width / 2.0 + right) * k,
+                bottom=-(self.height / 2.0 + bottom) * k,
+                top=(self.height / 2.0 + top) * k,
+                nearVal=self.near_clip,
+                farVal=self.far_clip,
+            )
+        )
+
+    def render_segmentation(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        physics_client: int | None = None,
+        margins: tuple[int, int, int, int] = (0, 0, 0, 0),
+    ) -> np.ndarray:
+        """
+        Segmentation mask on a canvas extended by ``(left, top, right, bottom)`` pixels.
+
+        Same pose, focal length in pixels and pixel grid as :meth:`render`
+        (shadows off, lighting irrelevant). The crop
+        ``[top:top + height, left:left + width]`` is the frame's mask; the
+        margins show what lies outside the frame.
+
+        Returns
+        -------
+        np.ndarray
+            int32 array of shape ``(height + top + bottom, width + left + right)``,
+            encoded like :attr:`RenderOutput.seg_mask`.
+        """
+        left, top, right, bottom = (int(m) for m in margins)
+        if min(left, top, right, bottom) < 0:
+            raise ValueError(f"margins must be >= 0, got {margins}")
+        w = self.width + left + right
+        h = self.height + top + bottom
+        kwargs = {
+            "width": w,
+            "height": h,
+            "viewMatrix": self.compute_view_matrix(pose),
+            "projectionMatrix": self.canvas_projection_matrix((left, top, right, bottom)),
+            "renderer": self.renderer,
+            "flags": p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+            "shadow": 0,
+        }
+        if physics_client is not None:
+            kwargs["physicsClientId"] = physics_client
+        seg_buf = p.getCameraImage(**kwargs)[4]
+        return np.reshape(np.asarray(seg_buf, dtype=np.int32), (h, w))
 
     # -- Benchmarking --
 

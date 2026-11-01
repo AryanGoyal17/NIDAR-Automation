@@ -69,7 +69,7 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 
 **Simulator (`sim/`, exists, runs, not yet usable for training data):**
 - `maze.py`: maze builder from ASCII grids. `layout_gen.py`: random maze generator. There are 6 layouts in `sim/layouts/`.
-- `camera.py`: pinhole camera returning colour, depth buffer and segmentation mask.
+- `camera.py`: pinhole camera returning colour, depth buffer and segmentation mask. `render_segmentation` renders the mask on a canvas extended by a margin on each side, with the same focal length in pixels; its frame crop equals the frame mask (0 px difference, tested). `project_aabb(clip=False)` / `project_box` give unclipped rectangles.
 - `trajectory.py`: pose and sequence sampler.
 - `survivor.py`: procedural survivors in 6 postures.
 - `randomize.py`: textures, lighting and frame augmentation.
