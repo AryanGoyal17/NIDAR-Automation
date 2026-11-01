@@ -42,6 +42,10 @@ python -m data_tools.leakage --train data/coco_person/anchor/images --cutouts da
 Rules and reasons: `docs/decisions/007_real_data_sources.md`. Settings:
 `configs/coco.yaml`.
 
+Only `instances_val2017.json` and `captions_val2017.json` are needed from `annotations_trainval2017.zip` (about 7.3 MB compressed of 252.9 MB), so if a future fresh setup stalls, fetching just those two members by HTTP range request is a possible fallback that is **NOT implemented**.
+
+`data/coco/DOWNLOAD.json` records, per zip, the size, the sha256 of the complete file, every download attempt (resumes included), and the `zipfile.testzip` result. For each extracted annotation file it records the CRC32 and uncompressed size from the zip directory and the sha256 of the extracted file. The sha256 values are recorded, **not verified against an official checksum**.
+
 | Folder | Content | Used for |
 |---|---|---|
 | `data/coco/` | `val2017.zip` (kept zipped), `annotations_trainval2017.zip`, the extracted `instances_val2017.json` and `captions_val2017.json`, `DOWNLOAD.json`, `split.json` | source |
