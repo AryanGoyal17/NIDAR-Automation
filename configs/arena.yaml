@@ -103,6 +103,21 @@ trajectory:
   rotate_yaw_step_deg: 10           # ASSUMPTION: yaw step per in-place frame (degrees)
   rotate_max_frames: 12             # ASSUMPTION: at most 12 in-place frames (120 degrees)
 
+# --- Training Labels (sim/labels.py) -----------------------------------------
+labels:
+  # Drop a label when more than this share of the survivor's full silhouette
+  # lies outside the frame (measured from a survivor-alone render)
+  max_truncation: 0.85              # ASSUMPTION: previous code default; to be revisited with training results
+
+  # Drop a label when more than this share of the survivor's in-frame
+  # silhouette is hidden (walls, clutter, other survivors)
+  max_occlusion: 0.90               # ASSUMPTION: previous code default; to be revisited with training results
+
+  # Largest survivor-alone canvas, as a multiple of the frame area. A survivor
+  # needing more is rendered on the capped canvas and its truncation is only a
+  # lower bound (label dropped as truncation_unbounded)
+  max_canvas_area_factor: 4.0       # ASSUMPTION: above the measured p95 (2.42) of 256 protocol poses at 1280x720
+
 # --- Survivor (Target) Specifications ----------------------------------------
 survivor:
   # Physical target nature ("human", "mannequin", or "dummy")

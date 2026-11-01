@@ -36,22 +36,39 @@ Filtering & Quality Rules
    Optional ``max_occlusion`` and ``max_truncation`` filters can reject
    excessively obscured targets.
 
+Measured truncation and occlusion
+---------------------------------
+:class:`SilhouetteRenderer` copies the survivor parts into a second PyBullet
+client (nothing else in it) and renders each survivor alone with the same
+camera, on a canvas extended past the frame where the survivor overhangs it
+(:meth:`sim.camera.PinholeCamera.render_segmentation`). From that
+:class:`Silhouette`:
+
+- truncation = survivor-alone pixels outside the frame / all survivor-alone pixels;
+- occlusion = share of the survivor-alone pixels inside the frame that are
+  not visible in the real render (hidden by walls, clutter or other survivors).
+
 Usage (CLI smoke test)::
 
     python -m sim.labels
 
 Programmatic::
 
-    from sim.labels import compute_survivor_labels, save_yolo_labels
+    from sim.labels import SilhouetteRenderer, compute_survivor_labels, save_yolo_labels
 
-    labels = compute_survivor_labels(seg_mask, survivors, img_w=1280, img_h=720)
+    with SilhouetteRenderer(camera, survivors, physics_client=cid) as silhouettes:
+        out = camera.render(pose, physics_client=cid)
+        labels = compute_survivor_labels(
+            out.seg_mask, survivors, silhouettes=silhouettes.render(pose)
+        )
     save_yolo_labels(labels, "data/labels/frame_000001.txt")
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +84,12 @@ DEFAULT_MAX_OCCLUSION: float = 0.90
 DEFAULT_MAX_TRUNCATION: float = 0.85
 DEFAULT_CLASS_ID: int = 0
 DEFAULT_CLASS_NAME: str = "person"
+DEFAULT_ARENA_CONFIG = Path("configs/arena.yaml")
+
+# Extra canvas pixels past a projected overhang (silhouette edge rounding).
+CANVAS_PAD_PX: int = 2
+# Hidden survivor copies are moved this far up, well beyond the far clip plane.
+PARK_OFFSET_M: float = 1000.0
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +176,9 @@ class SurvivorLabel:
     truncation_fraction: float = 0.0
     """Fraction in [0.0, 1.0] representing how much of the target is cut off by borders."""
 
+    truncation_exact: bool = True
+    """False when truncation_fraction is only a lower bound (see :class:`Silhouette`)."""
+
     image_width: int = 1280
     """Image width in pixels."""
 
@@ -189,7 +215,91 @@ class SurvivorLabel:
             "visible_pixels": self.visible_pixels,
             "occlusion_fraction": round(self.occlusion_fraction, 4),
             "truncation_fraction": round(self.truncation_fraction, 4),
+            "truncation_exact": self.truncation_exact,
         }
+
+
+@dataclass
+class Silhouette:
+    """
+    A survivor rendered alone (no walls, clutter or other survivors) from one pose.
+
+    Pixel counts use the frame's focal length and pixel grid; ``outside_pixels``
+    come from the canvas margins around the frame.
+    """
+
+    in_frame: np.ndarray
+    """Boolean (H, W) mask of the survivor-alone pixels inside the frame."""
+
+    in_frame_pixels: int
+    """Number of True pixels in ``in_frame``."""
+
+    outside_pixels: int
+    """Survivor-alone pixels on the canvas outside the frame."""
+
+    exact: bool
+    """False when part of the survivor may lie beyond the canvas (canvas capped by
+    ``max_canvas_area_factor``) or behind the near plane; truncation is then a
+    lower bound."""
+
+    canvas_area_factor: float
+    """Area of the rendered canvas divided by the frame area (1.0 = no margin)."""
+
+    @property
+    def total_pixels(self) -> int:
+        return self.in_frame_pixels + self.outside_pixels
+
+    @property
+    def truncation_fraction(self) -> float:
+        """Share of the survivor-alone pixels outside the frame."""
+        total = self.total_pixels
+        return self.outside_pixels / total if total > 0 else 0.0
+
+    def occlusion_fraction(self, visible_mask: np.ndarray) -> float:
+        """Share of the in-frame survivor-alone pixels not visible in the real render."""
+        if self.in_frame_pixels == 0:
+            return 0.0
+        seen = int(np.count_nonzero(visible_mask & self.in_frame))
+        return 1.0 - seen / self.in_frame_pixels
+
+
+@dataclass(frozen=True)
+class LabelConfig:
+    """
+    Label filter settings, from the ``labels`` section of ``configs/arena.yaml``.
+
+    Every value there is an ASSUMPTION; see the comments in that file.
+    """
+
+    max_truncation: float = DEFAULT_MAX_TRUNCATION
+    """Drop a label whose truncation fraction is above this."""
+
+    max_occlusion: float = DEFAULT_MAX_OCCLUSION
+    """Drop a label whose occlusion fraction is above this."""
+
+    max_canvas_area_factor: float = 4.0
+    """Largest silhouette canvas, as a multiple of the frame area."""
+
+    def __post_init__(self) -> None:
+        for name in ("max_truncation", "max_occlusion"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"labels.{name} must be in [0, 1], got {getattr(self, name)}")
+        if self.max_canvas_area_factor < 1.0:
+            raise ValueError(
+                f"labels.max_canvas_area_factor must be >= 1, got {self.max_canvas_area_factor}"
+            )
+
+    @classmethod
+    def from_arena_config(cls, path: str | Path = DEFAULT_ARENA_CONFIG) -> LabelConfig:
+        """Read the ``labels`` section; missing keys keep the defaults, unknown keys raise."""
+        from cv.config import load_config  # needs yaml, so imported only here
+
+        section = load_config(path).to_dict().get("labels") or {}
+        known = {f.name for f in fields(cls)}
+        unknown = sorted(set(section) - known)
+        if unknown:
+            raise ValueError(f"unknown keys in the labels section of {path}: {unknown}")
+        return cls(**{k: type(getattr(cls, k))(v) for k, v in section.items()})
 
 
 # --------------------------------------------------------------------------- #
@@ -367,6 +477,7 @@ def compute_survivor_labels(
     min_box_size: float = DEFAULT_MIN_BOX_SIZE,
     max_occlusion: float = DEFAULT_MAX_OCCLUSION,
     max_truncation: float = DEFAULT_MAX_TRUNCATION,
+    silhouettes: Sequence[Silhouette | None] | None = None,
 ) -> list[SurvivorLabel]:
     """
     Extract YOLO survivor labels from a raw PyBullet segmentation mask.
@@ -374,6 +485,12 @@ def compute_survivor_labels(
     Handles either raw segmentation buffers (auto-decodes) or already-decoded
     masks. Accepts a sequence of :class:`sim.survivor.SurvivorInfo` objects,
     integer body IDs, or sequences of body IDs.
+
+    Truncation and occlusion are measured only when ``silhouettes`` (from
+    :meth:`SilhouetteRenderer.render` for the same pose, one per survivor) are
+    given; without them both stay 0 and their filters cannot fire. A label
+    whose truncation is only a lower bound (``Silhouette.exact`` False) is
+    dropped, because the truncation filter cannot be checked.
 
     Parameters
     ----------
@@ -393,6 +510,8 @@ def compute_survivor_labels(
         Maximum allowed occlusion fraction before filtering out.
     max_truncation : float
         Maximum allowed truncation fraction before filtering out.
+    silhouettes : sequence of Silhouette or None, optional
+        Survivor-alone renders, indexed like ``survivors``.
 
     Returns
     -------
@@ -401,18 +520,13 @@ def compute_survivor_labels(
     """
     # Auto-decode mask if raw PyBullet flags were used
     decoded = decode_segmentation_mask(seg_mask)
+    if silhouettes is not None and len(silhouettes) != len(survivors):
+        raise ValueError(f"{len(silhouettes)} silhouettes for {len(survivors)} survivors")
 
     labels: list[SurvivorLabel] = []
     for idx, survivor in enumerate(survivors):
-        # Extract body IDs from SurvivorInfo or raw sequence/int
-        if hasattr(survivor, "body_ids"):
-            body_ids = survivor.body_ids
-        elif isinstance(survivor, (int, np.integer)):
-            body_ids = [int(survivor)]
-        elif isinstance(survivor, (list, tuple, set)):
-            body_ids = list(survivor)
-        else:
-            raise TypeError(f"Unsupported survivor type: {type(survivor)}")
+        body_ids = _survivor_body_ids(survivor)
+        measured = silhouettes is not None
 
         label = compute_box_for_body_ids(
             decoded_mask=decoded,
@@ -421,14 +535,397 @@ def compute_survivor_labels(
             image_height=image_height,
             min_visible_pixels=min_visible_pixels,
             min_box_size=min_box_size,
-            max_occlusion=max_occlusion,
-            max_truncation=max_truncation,
+            # With silhouettes the filters are applied below, to measured values.
+            max_occlusion=1.0 if measured else max_occlusion,
+            max_truncation=1.0 if measured else max_truncation,
             survivor_id=idx,
         )
+        if label is not None and measured:
+            label = _apply_silhouette(
+                label, decoded, body_ids, silhouettes[idx], max_occlusion, max_truncation
+            )
         if label is not None:
             labels.append(label)
 
     return labels
+
+
+def _survivor_body_ids(survivor: Any) -> list[int]:
+    """Body IDs of a SurvivorInfo, a single body ID or a sequence of body IDs."""
+    if hasattr(survivor, "body_ids"):
+        return [int(b) for b in survivor.body_ids]
+    if isinstance(survivor, (int, np.integer)):
+        return [int(survivor)]
+    if isinstance(survivor, (list, tuple, set)):
+        return [int(b) for b in survivor]
+    raise TypeError(f"Unsupported survivor type: {type(survivor)}")
+
+
+def _apply_silhouette(
+    label: SurvivorLabel,
+    decoded: np.ndarray,
+    body_ids: list[int],
+    silhouette: Silhouette | None,
+    max_occlusion: float,
+    max_truncation: float,
+) -> SurvivorLabel | None:
+    """Set measured truncation and occlusion on a label; None if a filter rejects it."""
+    if silhouette is None:
+        raise ValueError(
+            f"survivor {label.survivor_id} is visible but has no silhouette "
+            "(silhouettes must come from the same pose and survivors)"
+        )
+    visible = np.isin(decoded, body_ids)
+    label.total_expected_pixels = silhouette.in_frame_pixels
+    label.truncation_fraction = silhouette.truncation_fraction
+    label.occlusion_fraction = silhouette.occlusion_fraction(visible)
+    label.truncation_exact = silhouette.exact
+    if label.occlusion_fraction > max_occlusion or label.truncation_fraction > max_truncation:
+        return None
+    if not silhouette.exact:
+        return None
+    return label
+
+
+# --------------------------------------------------------------------------- #
+# Survivor-alone silhouettes
+# --------------------------------------------------------------------------- #
+# Corner c of a box has local signs (x, y, z) from bits (c & 4, c & 2, c & 1),
+# the corner order sim.camera.PinholeCamera.project_box expects.
+_CORNER_SIGNS = np.array(
+    [[1.0 if (c >> k) & 1 else -1.0 for k in (2, 1, 0)] for c in range(8)], dtype=np.float64
+)
+# Shape types SilhouetteRenderer copies (PyBullet GEOM_* names).
+_COPIED_SHAPES = ("GEOM_SPHERE", "GEOM_BOX", "GEOM_CYLINDER", "GEOM_CAPSULE")
+_SHAPE_NAMES = (*_COPIED_SHAPES, "GEOM_MESH", "GEOM_PLANE", "GEOM_HEIGHTFIELD")
+
+
+class UnsupportedShapeError(ValueError):
+    """A body has a shape that :class:`SilhouetteRenderer` cannot copy."""
+
+
+def _rects_overlap(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+class SilhouetteRenderer:
+    """
+    Renders each survivor alone, for measured truncation and occlusion.
+
+    On creation the survivor parts are copied into a second PyBullet DIRECT
+    client that holds nothing else. The copy is generic, from PyBullet shape
+    data: visual and collision shape type, dimensions and local frame, the
+    inertial frame and the base pose. The main scene is never modified.
+    Supported: single-link bodies with at most one visual and one collision
+    shape, each a sphere, box, cylinder or capsule. Anything else raises
+    :class:`UnsupportedShapeError` naming the body and shape type.
+
+    For a pose, survivors whose parts project into the frame are rendered with
+    the camera's :meth:`~sim.camera.PinholeCamera.render_segmentation`, on a
+    canvas extended on each side where a part's box overhangs the frame (the
+    part boxes bound the silhouette, so it cannot reach past the canvas unless
+    the canvas is capped). Survivors whose projected part boxes overlap are
+    rendered in separate passes, so each one is seen alone.
+
+    Create one per scene after the survivors are placed (they are assumed
+    static) and close it when done, or use it as a context manager.
+
+    Parameters
+    ----------
+    camera : sim.camera.PinholeCamera
+        The camera that renders the real frames (same size and FOV).
+    survivors : sequence of SurvivorInfo, int or sequence of ints
+        Survivors in the main scene, as for :func:`compute_survivor_labels`.
+    physics_client : int
+        The main scene's PyBullet client.
+    max_canvas_area_factor : float, optional
+        Canvas area cap as a multiple of the frame area; defaults to
+        ``labels.max_canvas_area_factor`` in ``arena_config_path``.
+    """
+
+    def __init__(
+        self,
+        camera: Any,
+        survivors: Sequence[Any],
+        physics_client: int,
+        max_canvas_area_factor: float | None = None,
+        arena_config_path: str | Path = DEFAULT_ARENA_CONFIG,
+    ) -> None:
+        import pybullet as p  # optional dependency: only this class needs it
+
+        self._p = p
+        self.camera = camera
+        if max_canvas_area_factor is None:
+            max_canvas_area_factor = LabelConfig.from_arena_config(
+                arena_config_path
+            ).max_canvas_area_factor
+        if max_canvas_area_factor < 1.0:
+            raise ValueError(f"max_canvas_area_factor must be >= 1, got {max_canvas_area_factor}")
+        self.max_canvas_area_factor = float(max_canvas_area_factor)
+        self.copy_client: int | None = p.connect(p.DIRECT)
+        self.copy_ids: list[list[int]] = []
+        """Copy body IDs per survivor, in the copy client."""
+        self.last_canvas_area_factors: list[float] = []
+        """Canvas area / frame area of each pass of the last :meth:`render`."""
+        self._corners: list[list[np.ndarray]] = []
+        self._poses: dict[int, tuple[Any, Any]] = {}
+        self._parked: set[int] = set()
+        try:
+            for survivor in survivors:
+                body_ids = _survivor_body_ids(survivor)
+                if not body_ids:
+                    raise ValueError("survivor has no body parts")
+                ids: list[int] = []
+                corners: list[np.ndarray] = []
+                for bid in body_ids:
+                    copy, part_corners = self._copy_body(bid, physics_client)
+                    ids.append(copy)
+                    corners.extend(part_corners)
+                self.copy_ids.append(ids)
+                self._corners.append(corners)
+        except BaseException:
+            self.close()
+            raise
+
+    # -- Lifecycle --
+
+    def close(self) -> None:
+        """Disconnect the copy client (safe to call twice)."""
+        if self.copy_client is not None:
+            self._p.disconnect(self.copy_client)
+            self.copy_client = None
+
+    def __enter__(self) -> SilhouetteRenderer:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # -- Copying --
+
+    def _shape_name(self, shape_type: int) -> str:
+        for name in _SHAPE_NAMES:
+            if getattr(self._p, name) == shape_type:
+                return name
+        return "unknown"
+
+    def _shape_kwargs(
+        self, body_id: int, kind: str, shape_type: int, dims: Sequence[float]
+    ) -> dict[str, Any]:
+        """createVisualShape / createCollisionShape size arguments from shape data dimensions."""
+        p = self._p
+        if shape_type == p.GEOM_SPHERE:
+            return {"radius": dims[0]}
+        if shape_type == p.GEOM_BOX:
+            return {"halfExtents": [d / 2.0 for d in dims[:3]]}
+        if shape_type in (p.GEOM_CAPSULE, p.GEOM_CYLINDER):
+            # Shape data gives (length, radius); the length argument is named
+            # "length" for visual shapes and "height" for collision shapes.
+            return {"radius": dims[1], ("length" if kind == "visual" else "height"): dims[0]}
+        raise UnsupportedShapeError(
+            f"body {body_id} has {kind} shape type {self._shape_name(shape_type)} "
+            f"({shape_type}); SilhouetteRenderer copies only {', '.join(_COPIED_SHAPES)}"
+        )
+
+    def _half_extents(self, shape_type: int, dims: Sequence[float]) -> np.ndarray:
+        """Half extents of the box enclosing a visual shape, in its local frame."""
+        p = self._p
+        if shape_type == p.GEOM_SPHERE:
+            r = dims[0]
+            return np.array([r, r, r])
+        if shape_type == p.GEOM_BOX:
+            return np.asarray(dims[:3], dtype=np.float64) / 2.0
+        length, r = dims[0], dims[1]  # capsule or cylinder, axis along local z
+        cap = r if shape_type == p.GEOM_CAPSULE else 0.0
+        return np.array([r, r, length / 2.0 + cap])
+
+    def _copy_body(self, body_id: int, src: int) -> tuple[int, list[np.ndarray]]:
+        """Copy one body into the copy client; return its ID and its visual box corners."""
+        p = self._p
+        dst = self.copy_client
+        if p.getNumJoints(body_id, physicsClientId=src) > 0:
+            raise UnsupportedShapeError(
+                f"body {body_id} has links; SilhouetteRenderer copies single-link bodies only"
+            )
+        com_pos, com_orn = p.getBasePositionAndOrientation(body_id, physicsClientId=src)
+        inertial_pos, inertial_orn = p.getDynamicsInfo(body_id, -1, physicsClientId=src)[3:5]
+        # Base link frame = centre-of-mass frame composed with the inverse inertial frame.
+        link_pos, link_orn = p.multiplyTransforms(
+            com_pos, com_orn, *p.invertTransform(inertial_pos, inertial_orn)
+        )
+        visuals = [v for v in p.getVisualShapeData(body_id, physicsClientId=src) if v[1] == -1]
+        collisions = p.getCollisionShapeData(body_id, -1, physicsClientId=src)
+        for kind, shapes in (("visual", visuals), ("collision", collisions)):
+            if len(shapes) > 1:
+                raise UnsupportedShapeError(
+                    f"body {body_id} has {len(shapes)} {kind} shapes; "
+                    "SilhouetteRenderer copies one per body"
+                )
+
+        visual_index, corners = -1, []
+        if visuals:
+            shape_type, dims, _, local_pos, local_orn, rgba = visuals[0][2:8]
+            visual_index = p.createVisualShape(
+                shape_type,
+                rgbaColor=rgba,
+                visualFramePosition=local_pos,
+                visualFrameOrientation=local_orn,
+                physicsClientId=dst,
+                **self._shape_kwargs(body_id, "visual", shape_type, dims),
+            )
+            # Visual frames are given relative to the link frame.
+            pos, orn = p.multiplyTransforms(link_pos, link_orn, local_pos, local_orn)
+            rot = np.array(p.getMatrixFromQuaternion(orn), dtype=np.float64).reshape(3, 3)
+            local = _CORNER_SIGNS * self._half_extents(shape_type, dims)
+            corners.append(np.asarray(pos) + local @ rot.T)
+
+        collision_index = -1
+        if collisions:
+            shape_type, dims, _, local_pos, local_orn = collisions[0][2:7]
+            # Collision frames are given relative to the inertial frame.
+            frame_pos, frame_orn = p.multiplyTransforms(
+                inertial_pos, inertial_orn, local_pos, local_orn
+            )
+            collision_index = p.createCollisionShape(
+                shape_type,
+                collisionFramePosition=frame_pos,
+                collisionFrameOrientation=frame_orn,
+                physicsClientId=dst,
+                **self._shape_kwargs(body_id, "collision", shape_type, dims),
+            )
+
+        copy = p.createMultiBody(
+            baseMass=0,
+            baseCollisionShapeIndex=collision_index,
+            baseVisualShapeIndex=visual_index,
+            basePosition=link_pos,
+            baseOrientation=link_orn,
+            baseInertialFramePosition=inertial_pos,
+            baseInertialFrameOrientation=inertial_orn,
+            physicsClientId=dst,
+        )
+        p.resetBasePositionAndOrientation(copy, com_pos, com_orn, physicsClientId=dst)
+        self._poses[copy] = (com_pos, com_orn)
+        return copy, corners
+
+    # -- Rendering --
+
+    def _needed_margins(self, rect: tuple[float, float, float, float]) -> tuple[int, ...]:
+        """(left, top, right, bottom) canvas margins that contain ``rect``."""
+        w, h = self.camera.width, self.camera.height
+        x1, y1, x2, y2 = rect
+        return (
+            math.ceil(-x1) + CANVAS_PAD_PX if x1 < 0 else 0,
+            math.ceil(-y1) + CANVAS_PAD_PX if y1 < 0 else 0,
+            math.ceil(x2 - w) + CANVAS_PAD_PX if x2 > w else 0,
+            math.ceil(y2 - h) + CANVAS_PAD_PX if y2 > h else 0,
+        )
+
+    def _capped_margins(self, margins: tuple[int, ...]) -> tuple[int, ...]:
+        """Scale margins down so the canvas area is at most the cap."""
+        w, h = self.camera.width, self.camera.height
+        left, top, right, bottom = margins
+        cap = self.max_canvas_area_factor * w * h
+        if (w + left + right) * (h + top + bottom) <= cap:
+            return margins
+        # Solve (w + s * mx) * (h + s * my) = cap for the scale s in [0, 1].
+        mx, my = left + right, top + bottom
+        a, b, c = mx * my, w * my + h * mx, w * h - cap
+        s = -c / b if a == 0 else (-b + math.sqrt(b * b - 4 * a * c)) / (2 * a)
+        return tuple(int(math.floor(m * s)) for m in margins)
+
+    def _show_only(self, group: list[int]) -> None:
+        """Park every survivor copy outside ``group`` beyond the far clip plane."""
+        p = self._p
+        keep = {copy for i in group for copy in self.copy_ids[i]}
+        for copy, (pos, orn) in self._poses.items():
+            park = copy not in keep
+            if park == (copy in self._parked):
+                continue
+            target = (pos[0], pos[1], pos[2] + PARK_OFFSET_M) if park else pos
+            p.resetBasePositionAndOrientation(copy, target, orn, physicsClientId=self.copy_client)
+            if park:
+                self._parked.add(copy)
+            else:
+                self._parked.discard(copy)
+
+    def render(self, pose: Any) -> list[Silhouette | None]:
+        """
+        Survivor-alone silhouettes from ``pose``, one per survivor.
+
+        None for a survivor none of whose parts project into the frame (it
+        cannot have visible pixels there).
+        """
+        from sim.camera import camera_axes
+
+        if self.copy_client is None:
+            raise RuntimeError("SilhouetteRenderer is closed")
+        cam = self.camera
+        w, h = cam.width, cam.height
+        eye, fwd, _ = camera_axes(pose)
+        eye = np.asarray(eye, dtype=np.float64)
+
+        rects: list[tuple[float, float, float, float] | None] = []
+        behind: list[bool] = []
+        for corners in self._corners:
+            rect = None
+            crosses = False
+            for box in corners:
+                crosses |= bool((((box - eye) @ fwd) < cam.near_clip).any())
+                r = cam.project_box(pose, box, clip=False)
+                if r is not None:
+                    rect = (
+                        r
+                        if rect is None
+                        else (
+                            min(rect[0], r[0]),
+                            min(rect[1], r[1]),
+                            max(rect[2], r[2]),
+                            max(rect[3], r[3]),
+                        )
+                    )
+            if rect is not None and (rect[2] <= 0 or rect[0] >= w or rect[3] <= 0 or rect[1] >= h):
+                rect = None
+            rects.append(rect)
+            behind.append(crosses)
+
+        groups: list[list[int]] = []
+        for i, rect in enumerate(rects):
+            if rect is None:
+                continue
+            for group in groups:
+                if not any(_rects_overlap(rect, rects[j]) for j in group):
+                    group.append(i)
+                    break
+            else:
+                groups.append([i])
+
+        out: list[Silhouette | None] = [None] * len(rects)
+        self.last_canvas_area_factors = []
+        for group in groups:
+            needed = {i: self._needed_margins(rects[i]) for i in group}
+            margins = self._capped_margins(
+                tuple(max(needed[i][k] for i in group) for k in range(4))
+            )
+            self._show_only(group)
+            seg = cam.render_segmentation(pose, physics_client=self.copy_client, margins=margins)
+            ids = np.where(seg >= 0, seg & OBJECT_ID_MASK, -1)
+            factor = seg.size / float(w * h)
+            self.last_canvas_area_factors.append(factor)
+            left, top = margins[0], margins[1]
+            for i in group:
+                mask = np.isin(ids, self.copy_ids[i])
+                in_frame = mask[top : top + h, left : left + w]
+                n_in = int(np.count_nonzero(in_frame))
+                fits = all(n <= m for n, m in zip(needed[i], margins, strict=True))
+                out[i] = Silhouette(
+                    in_frame=in_frame,
+                    in_frame_pixels=n_in,
+                    outside_pixels=int(np.count_nonzero(mask)) - n_in,
+                    exact=fits and not behind[i],
+                    canvas_area_factor=factor,
+                )
+        return out
 
 
 # --------------------------------------------------------------------------- #
