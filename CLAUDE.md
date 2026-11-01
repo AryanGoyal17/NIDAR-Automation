@@ -186,6 +186,10 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
   - **Leakage** (47.1 s): 1554 training sources (1158 anchor + 396 cutout source photos) vs 560 sanity images: 0 errors, 0 near-match warnings. Sanity passed as `--train`: 560 errors, exit 1.
   - **Disk:** data/coco 1.09 GB, data/coco_person 0.28 GB, data/coco_cutouts 0.03 GB. Free on D: 3.44 GB at the start of the session, 2.03 GB at the end (decimal GB; never near the 1 GB floor).
 
+**On branch `feat/train-eval` (Task 4b-1, not merged): dataset lists, training wrapper, evaluation. Protocol: `docs/decisions/008_training_protocol.md`.**
+- `configs/dataset.yaml` + `data_tools/build_dataset.py`: Ultralytics list files, no image copied. E1 = sim_train (val sim_val); E2 = sim_train + every anchor_train image once (val sim_val + anchor_val). Anchor split by salted COCO id hash `sha256("<seed>:anchor_val:<id>")`, 0.15 to anchor_val (ASSUMPTION); the unsalted hash with seed 2026 would put no image in anchor_val, because `coco_split` picked the anchor group with the same hash (bug found on the first plan run, regression test added). Writes `<out>/{e1,e2}/{train,val}.txt, data.yaml, manifest.json` and `<out>/eval/{sim_val,anchor_val,sanity}.txt` (sanity: evaluation only). Lists sorted, absolute POSIX paths. Refuses (exit 1, nothing written): a missing image or label file, a shared group (master seed, scene index) or shared master seed / maze seed / grid / hand-made layout between sim train and val, a path under a protected dir, any `leakage.check` error (sha256, COCO id, split rules) against sanity (+ `data/test_proxy`, `data/test_real` if present). E2 anchor image share outside `anchor_share_band` [0.10, 0.50] stops before writing (exit 3) unless `--allow-anchor-share`. `--plan` prints counts only. Tests: `test_build_dataset.py` (synthetic runs and COCO sets: label path = Ultralytics `img2label_paths`, sorted deterministic lists, E2 = E1 + anchor_train once, split deterministic and independent of `coco_split`, planted group overlap, same run as train and val, shared layout, sanity path, sanity byte copy in anchor and in a sim run, share band, plan writes nothing).
+- `cv/utils/run_info.py`: power plan + AC state, git commit + dirty flag, library versions, UTC time (copy of the generator's power reader; `sim/generator.py` unchanged).
+
 **Known open defects on `main`:**
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Survivor parts inside walls (`labelfix/report.md` §6; the 16 scenes of the 256-frame protocol, re-rendered at 640x360): 30 of 48 survivors have a body-part box overlapping a wall box (lying_supine 15/15, lying_prone 15/16, standing 0/5, sitting 0/10, lying_lateral 0/2). Checked by box overlap with boxes shrunk by 3 cm to skip PyBullet AABB margins; this is an upper bound, because a rotated capsule's AABB is larger than the capsule. This inflates occlusion values until the posture geometry (C2) is rebuilt.
@@ -200,7 +204,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 
 **Removed:** `gcs/` (ground-station stubs, out of scope). `AGENTS.md` (this file is the only agent context).
 
-**Empty placeholders:** `cv/utils/`, `interfaces/schemas/`, `tests/test_interfaces/` (`.gitkeep` only).
+**Empty placeholders:** `interfaces/schemas/`, `tests/test_interfaces/` (`.gitkeep` only).
 
 **README:** `README.md` exists but is out of date: it still describes the Jetson, RT-DETR and an RGB-only camera. A rewrite is planned.
 
@@ -216,9 +220,9 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 
 ```
 configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, generator_train.yaml, generator_val.yaml, coco.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
-cv/                 [exists] config.py, logger.py, detectors/, utils/ (empty). [PLANNED] eval/, tracking/, train/, depth, detector_api.py
+cv/                 [exists] config.py, logger.py, detectors/, utils/run_info.py. [PLANNED] eval/, tracking/, train/, depth, detector_api.py
 sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (dataset runs), layouts/. [PLANNED] clutter
-data_tools/         [exists] draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download), coco_split, coco_person_sets (anchor/sanity YOLO sets), make_person_cutouts, coco_sheets, leakage (train vs protected sets). [PLANNED] compositor, dataset builder
+data_tools/         [exists] build_dataset (E1/E2 list files, group split, leakage gate), draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download), coco_split, coco_person_sets (anchor/sanity YOLO sets), make_person_cutouts, coco_sheets, leakage (train vs protected sets). [PLANNED] compositor
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
 docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
@@ -243,6 +247,7 @@ python -m data_tools.coco_split                               # data/coco/split.
 python -m data_tools.coco_person_sets                         # data/coco_person/{anchor,sanity} + anchor.yaml, sanity.yaml (--plan: estimate only)
 python -m data_tools.make_person_cutouts                      # data/coco_cutouts/ RGBA PNGs + manifest.json
 python -m data_tools.leakage --train data/coco_person/anchor/images --cutouts data/coco_cutouts   # exit 1 on exact overlap with protected sets
+python -m data_tools.build_dataset --plan                     # E1/E2 counts and anchor share; without --plan writes data/yolo_ds/ (runs leakage, exit 1 on overlap)
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)

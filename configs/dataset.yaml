@@ -1,0 +1,42 @@
+# ==============================================================================
+# NIDAR AirMouse — Training dataset lists (data_tools/build_dataset.py)
+# ==============================================================================
+# The builder copies no image. It writes Ultralytics list files (one absolute
+# image path per line; Ultralytics finds each label by replacing /images/ with
+# /labels/) and data yaml files for two training variants:
+#   E1 = sim_train only,                 validated on sim_val
+#   E2 = sim_train + anchor_train once,  validated on sim_val + anchor_val
+# The COCO sanity set (COCO sanity set, not arena) is never in a training or
+# validation list: it is used only for the final report (eval/sanity.txt).
+# Rationale: docs/decisions/008_training_protocol.md.
+# ==============================================================================
+
+sim:
+  # Generator run dirs (python -m sim.generator). Group = (master seed, scene index).
+  train_runs: [data/sim_raw/train]      # configs/generator_train.yaml, seed 1000
+  val_runs: [data/sim_raw/val]          # configs/generator_val.yaml, seed 2000
+
+anchor:
+  dir: data/coco_person/anchor          # COCO anchor YOLO set (data_tools/coco_person_sets.py)
+  val_fraction: 0.15                    # ASSUMPTION: anchor_val share, by COCO id hash
+  seed: 2026                            # u = first 64 bits of sha256("<seed>:anchor_val:<id>") / 2^64 < val_fraction -> anchor_val
+                                        # (salted: coco_split used sha256("<seed>:<id>") to pick the anchor group)
+
+eval:
+  sanity_dir: data/coco_person/sanity   # COCO sanity set, not arena: report only
+
+# Protected sets: nothing in them may appear in a training or validation list
+# (missing directories are skipped). data_tools/leakage.py runs on every build.
+protected:
+  - data/coco_person/sanity/images
+  - data/test_proxy
+  - data/test_real
+
+# COCO config for the leakage check (split.json, dHash distance) and disk floor
+coco_config: configs/coco.yaml
+
+out_dir: data/yolo_ds
+
+# Share of anchor images in E2's training list outside this band stops the
+# build (exit 3) unless --allow-anchor-share is given (owner's rule, Task 4b-1).
+anchor_share_band: [0.10, 0.50]
