@@ -102,6 +102,12 @@ class RenderOutput(NamedTuple):
 # --------------------------------------------------------------------------- #
 # Camera axes
 # --------------------------------------------------------------------------- #
+# Box corner c has bits (x, y, z) = (c & 4, c & 2, c & 1): set means the max side.
+_BOX_CORNER_BITS = np.array([[(c >> 2) & 1, (c >> 1) & 1, c & 1] for c in range(8)], dtype=bool)
+# The 12 box edges: corner pairs differing in exactly one bit.
+_BOX_EDGES = np.array([(c, c | bit) for c in range(8) for bit in (4, 2, 1) if not c & bit])
+
+
 def camera_axes(
     pose: CameraPose | tuple[float, float, float, float, float, float],
 ) -> tuple[tuple[float, float, float], np.ndarray, np.ndarray]:
@@ -284,53 +290,8 @@ class PinholeCamera:
         (x1, y1, x2, y2) in float pixels, origin top-left, or None if no part
         of the box is in front of the camera or inside the image.
         """
-        (x, y, z), fwd, up = camera_axes(pose)
-        # Same basis as gluLookAt / p.computeViewMatrix.
-        side = np.cross(fwd, up)
-        side /= np.linalg.norm(side)
-        cam_up = np.cross(side, fwd)
-        eye = np.array([x, y, z], dtype=np.float64)
-
-        lo, hi = aabb
-        corners = np.array(
-            [
-                [(lo, hi)[i][0], (lo, hi)[j][1], (lo, hi)[k][2]]
-                for i in (0, 1)
-                for j in (0, 1)
-                for k in (0, 1)
-            ],
-            dtype=np.float64,
-        )
-        rel = corners - eye
-        cam = np.stack([rel @ side, rel @ cam_up, rel @ fwd], axis=1)  # x right, y up, depth
-
-        near = self.near_clip
-        points = [c for c in cam if c[2] >= near]
-        # Corner index bits are (x, y, z); an edge joins corners differing in one bit.
-        for a in range(8):
-            for bit in (1, 2, 4):
-                b = a | bit
-                if b == a:
-                    continue
-                da, db = cam[a][2] - near, cam[b][2] - near
-                if (da < 0.0) != (db < 0.0):
-                    t = da / (da - db)
-                    points.append(cam[a] + t * (cam[b] - cam[a]))
-        if not points:
-            return None
-
-        pts = np.array(points)
-        tan_v = math.tan(math.radians(self.vertical_fov_deg) / 2.0)
-        ndc_x = pts[:, 0] / (pts[:, 2] * tan_v * self.aspect_ratio)
-        ndc_y = pts[:, 1] / (pts[:, 2] * tan_v)
-        u = (ndc_x + 1.0) * 0.5 * self.width
-        v = (1.0 - ndc_y) * 0.5 * self.height
-
-        x1, x2 = max(float(u.min()), 0.0), min(float(u.max()), float(self.width))
-        y1, y2 = max(float(v.min()), 0.0), min(float(v.max()), float(self.height))
-        if x2 <= x1 or y2 <= y1:
-            return None
-        return (x1, y1, x2, y2)
+        eye, basis = self._view_basis(pose)
+        return self._project_aabb_in_view(eye, basis, aabb)
 
     def projected_box_fraction(
         self,
@@ -342,11 +303,78 @@ class PinholeCamera:
 
         Conservative for rotated bodies (see :meth:`project_aabb`).
         """
-        rect = self.project_aabb(pose, aabb)
-        if rect is None:
-            return 0.0
-        x1, y1, x2, y2 = rect
-        return (x2 - x1) * (y2 - y1) / float(self.width * self.height)
+        return self.projected_box_fractions(pose, [aabb])[0]
+
+    def projected_box_fractions(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        boxes: list[tuple[tuple[float, float, float], tuple[float, float, float]]],
+    ) -> list[float]:
+        """:meth:`projected_box_fraction` for several boxes seen from one pose."""
+        eye, basis = self._view_basis(pose)
+        image_area = float(self.width * self.height)
+        fractions = []
+        for aabb in boxes:
+            rect = self._project_aabb_in_view(eye, basis, aabb)
+            if rect is None:
+                fractions.append(0.0)
+            else:
+                x1, y1, x2, y2 = rect
+                fractions.append((x2 - x1) * (y2 - y1) / image_area)
+        return fractions
+
+    @staticmethod
+    def _view_basis(
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Eye and 3x3 world-to-camera rows (x right, y up, depth) from camera_axes."""
+        (x, y, z), fwd, up = camera_axes(pose)
+        f0, f1, f2 = fwd.tolist()
+        u0, u1, u2 = up.tolist()
+        # Same basis as gluLookAt / p.computeViewMatrix: side = fwd x up, cam_up = side x fwd.
+        s0, s1, s2 = f1 * u2 - f2 * u1, f2 * u0 - f0 * u2, f0 * u1 - f1 * u0
+        norm = math.sqrt(s0 * s0 + s1 * s1 + s2 * s2)
+        s0, s1, s2 = s0 / norm, s1 / norm, s2 / norm
+        c0, c1, c2 = s1 * f2 - s2 * f1, s2 * f0 - s0 * f2, s0 * f1 - s1 * f0
+        eye = np.array([x, y, z], dtype=np.float64)
+        return eye, np.array([[s0, s1, s2], [c0, c1, c2], [f0, f1, f2]], dtype=np.float64)
+
+    def _project_aabb_in_view(
+        self,
+        eye: np.ndarray,
+        basis: np.ndarray,
+        aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+    ) -> tuple[float, float, float, float] | None:
+        """:meth:`project_aabb` with a precomputed view basis."""
+        lo = np.asarray(aabb[0], dtype=np.float64)
+        hi = np.asarray(aabb[1], dtype=np.float64)
+        corners = np.where(_BOX_CORNER_BITS, hi, lo)
+        cam = (corners - eye) @ basis.T
+
+        # Keep corners in front of the near plane, plus the points where box
+        # edges cross it.
+        depth = cam[:, 2] - self.near_clip
+        pts = cam[depth >= 0.0]
+        ea, eb = _BOX_EDGES[:, 0], _BOX_EDGES[:, 1]
+        crossing = (depth[ea] < 0.0) != (depth[eb] < 0.0)
+        if crossing.any():
+            a, b = ea[crossing], eb[crossing]
+            t = depth[a] / (depth[a] - depth[b])
+            pts = np.vstack([pts, cam[a] + t[:, None] * (cam[b] - cam[a])])
+        if len(pts) == 0:
+            return None
+
+        tan_v = math.tan(math.radians(self.vertical_fov_deg) / 2.0)
+        ndc_x = pts[:, 0] / (pts[:, 2] * tan_v * self.aspect_ratio)
+        ndc_y = pts[:, 1] / (pts[:, 2] * tan_v)
+        u = (ndc_x + 1.0) * 0.5 * self.width
+        v = (1.0 - ndc_y) * 0.5 * self.height
+
+        x1, x2 = max(float(u.min()), 0.0), min(float(u.max()), float(self.width))
+        y1, y2 = max(float(v.min()), 0.0), min(float(v.max()), float(self.height))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return (x1, y1, x2, y2)
 
     # -- Rendering --
 
