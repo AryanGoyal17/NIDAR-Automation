@@ -4,7 +4,9 @@ data_tools/leakage.py — Check that no protected image leaks into training
 
 Compares training sources with protected (held-out) sets:
 
-- training sources: every image under each ``--train`` directory, and the COCO
+- training sources: every image under each ``--train`` directory, every image
+  named in each ``--train-list`` file (an Ultralytics list file, one path per
+  line; relative paths are taken relative to the list file), and the COCO
   source photos of each ``--cutouts`` directory (from its ``manifest.json``,
   read from ``val2017.zip``);
 - protected sets: each ``--protected`` directory; by default the COCO sanity
@@ -29,6 +31,7 @@ Usage::
 
     python -m data_tools.leakage --train data/coco_person/anchor/images --cutouts data/coco_cutouts
     python -m data_tools.leakage --train data/train/images --protected data/test_real --split none
+    python -m data_tools.leakage --train-list data/yolo_ds/e2/train.txt
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -70,12 +74,28 @@ def _decode(data: bytes, where: str) -> np.ndarray:
     return image
 
 
+def read_list(list_file: str | Path) -> list[Path]:
+    """Image paths of an Ultralytics list file (blank lines skipped; relative to the file)."""
+    list_file = Path(list_file)
+    paths = []
+    for line in list_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            path = Path(line)
+            paths.append(path if path.is_absolute() else list_file.parent / path)
+    return paths
+
+
 def scan_dir(directory: str | Path) -> list[ImageRecord]:
     """sha256, dHash and COCO id (from the file name) of every image under a directory."""
+    paths = [p for p in sorted(Path(directory).rglob("*")) if p.suffix.lower() in IMAGE_SUFFIXES]
+    return scan_paths(p for p in paths if p.is_file())
+
+
+def scan_paths(paths: Iterable[str | Path]) -> list[ImageRecord]:
+    """sha256, dHash and COCO id (from the file name) of each given image file."""
     records = []
-    for path in sorted(Path(directory).rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
-            continue
+    for path in map(Path, paths):
         data = path.read_bytes()
         m = COCO_NAME.match(path.name)
         records.append(
@@ -197,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         "--train", action="append", default=[], help="training image directory (repeatable)"
     )
     ap.add_argument(
+        "--train-list", action="append", default=[], help="training list file (repeatable)"
+    )
+    ap.add_argument(
         "--cutouts", action="append", default=[], help="cutout directory with manifest.json"
     )
     ap.add_argument(
@@ -216,10 +239,11 @@ def main(argv: list[str] | None = None) -> int:
     if not protected_dirs:
         log.error("no protected directory given or found")
         return 2
-    if not args.train and not args.cutouts:
-        log.error("no training source given (--train or --cutouts)")
+    if not args.train and not args.train_list and not args.cutouts:
+        log.error("no training source given (--train, --train-list or --cutouts)")
         return 2
     train = [r for d in args.train for r in scan_dir(d)]
+    train += scan_paths(p for f in args.train_list for p in read_list(f))
     if args.cutouts:
         with ImageZip(args.zip or cfg["paths"]["images_zip"]) as images:
             train += [r for d in args.cutouts for r in scan_cutout_sources(d, images)]
@@ -228,11 +252,14 @@ def main(argv: list[str] | None = None) -> int:
     split = None if split_path == "none" else load_split(split_path)
     result = check(train, protected, split, int(cfg["leakage"]["dhash_max_distance"]))
     result["train_dirs"] = args.train
+    result["train_lists"] = args.train_list
     result["cutout_dirs"] = args.cutouts
     result["protected_dirs"] = [str(p) for p in protected_dirs]
     result["split"] = split_path
 
-    print(f"training sources: {result['train_images']} images from {args.train + args.cutouts}")
+    print(
+        f"training sources: {result['train_images']} images from {args.train + args.train_list + args.cutouts}"
+    )
     print(f"protected:        {result['protected_images']} images from {result['protected_dirs']}")
     for w in result["warnings"]:
         print(f"WARNING {w}")

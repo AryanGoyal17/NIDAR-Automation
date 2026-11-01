@@ -23,8 +23,10 @@ from data_tools.leakage import (  # noqa: E402
     check,
     hamming_pairs,
     main,
+    read_list,
     scan_cutout_sources,
     scan_dir,
+    scan_paths,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -124,6 +126,29 @@ class TestLeakage:
             )
             == 0
         )
+
+    def test_list_file_clean_and_planted(self, dirs, capsys):
+        """A list file is scanned like a directory; a sanity image in it fails."""
+        lst = dirs["tmp"] / "lists" / "train.txt"
+        lst.parent.mkdir()
+        good = sorted(dirs["train"].glob("*.jpg"))
+        lst.write_text("".join(f"{p}\n" for p in good), encoding="utf-8")
+        args = ["--train-list", str(lst), "--protected", str(dirs["protected"]), "--split", "none"]
+        assert main(args) == 0
+        assert f"training sources: {len(good)} images" in capsys.readouterr().out
+        planted = dirs["protected"] / "000000000103.jpg"
+        lst.write_text(lst.read_text(encoding="utf-8") + f"{planted}\n", encoding="utf-8")
+        assert main(args) == 1
+        assert "same sha256" in capsys.readouterr().out
+
+    def test_read_list_relative_and_blank_lines(self, tmp_path):
+        lst = tmp_path / "sub" / "l.txt"
+        lst.parent.mkdir()
+        lst.write_text(f"a/x.jpg\n\n{tmp_path / 'y.jpg'}\n", encoding="utf-8")
+        assert read_list(lst) == [lst.parent / "a" / "x.jpg", tmp_path / "y.jpg"]
+
+    def test_scan_paths_equals_scan_dir(self, dirs):
+        assert scan_paths(sorted(dirs["train"].glob("*.jpg"))) == scan_dir(dirs["train"])
 
     def test_cutout_sources_from_manifest(self, dirs):
         zpath = dirs["tmp"] / "val2017.zip"
