@@ -164,6 +164,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - `configs/coco.yaml` (every value ASSUMPTION unless marked as the owner's choice) and `data_tools/coco_common.py` (config, annotation index, `ImageZip`, split hash, xywh to YOLO, size limits read from `arena.yaml labels`, sha256, 64-bit dHash, disk guard). Disk guard in decimal GB: every large step stops if less than `disk.min_free_gb` (1.0) would remain free, and a set estimated above `disk.confirm_above_gb` (0.5) is not written without `--yes`.
 - `data_tools/get_coco.py`: the only setup-time download (val2017.zip, annotations_trainval2017.zip into `data/coco/`). Streams in 1 MiB chunks, hashes while streaming, resumes a `.part` file when the server answers 206 and restarts on 200, checks the byte count, records url/bytes/sha256/UTC time in `data/coco/DOWNLOAD.json` (sha256 recorded, not verified: no official checksum known, TBD). Skips existing files. Extracts only `instances_val2017.json` and `captions_val2017.json` (zip-slip check); `val2017.zip` stays zipped. A blocked download exits 3 with no substitute source. Tests: `test_get_coco.py` (fake `urlopen`: fresh, resume, restart, short body, blocked, unsafe member).
 - `data/README.md` (committed, the only file under `data/`): licence terms (annotations CC BY 4.0, images from Flickr under their own licences, internal research use only, never committed or redistributed).
+- `data_tools/coco_split.py`: every val2017 image id goes to `cutout_source` / `anchor` / `sanity` (0.40/0.40/0.20, ASSUMPTION) by u = first 64 bits of sha256("<seed>:<id>") / 2^64; depends only on seed and id, so stable when images are added or removed. Writes `data/coco/split.json` and prints images, images with persons, person boxes and person crowd regions per group. Tests: `test_coco_split.py` (deterministic, disjoint and complete, shares within 0.015 on 20000 ids, stable on a subset, seed changes it).
 
 **Known open defects on `main`:**
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
@@ -197,7 +198,7 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, coco.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
 cv/                 [exists] config.py, logger.py, detectors/, utils/ (empty). [PLANNED] eval/, tracking/, train/, depth, detector_api.py
 sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (dataset runs), layouts/. [PLANNED] clutter
-data_tools/         [exists] draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download). [PLANNED] cutouts, compositor, dataset builder
+data_tools/         [exists] draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download), coco_split. [PLANNED] cutouts, compositor, dataset builder
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
 docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
@@ -218,6 +219,7 @@ python -m sim.generator --out data/sim_raw/run1 --scenes 40 --frames-per-scene 1
 python -m data_tools.check_generated --run data/sim_raw/run1 --stats         # validate a run (exit 1 if invalid) + statistics
 python -m data_tools.draw_boxes --run data/sim_raw/run1 --out sheet.png --tiles 24   # contact sheet from the written files
 python -m data_tools.get_coco                                 # setup only: COCO val2017 into data/coco/ (the only download)
+python -m data_tools.coco_split                               # data/coco/split.json: cutout_source / anchor / sanity
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)
