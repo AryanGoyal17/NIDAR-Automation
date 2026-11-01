@@ -86,6 +86,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Dark floor texture ranges: `randomization.yaml` solid `floor_color` (was 0.20–0.48) and noise `floor_base` (was 0.22–0.45) widened to 0.30–0.75 and 0.30–0.70 (ASSUMPTION, arena floor colour unknown). With the reset, normal-light floor grey over 200 scenes: mean 91.0 → 109.5, share below 60: 18.3 % → 0.6 %, above 200: 0 %.
 - Build-specific render pin: `TestRenderPinned` compared sha256 hashes recorded with this laptop's pybullet build. It now compares each pinned pose with a render made from an independently computed view matrix in the same run (per-pose BGR mean absolute difference < 0.05; pins the view/axis maths, not lighting or projection). Fails on a roll sign flip, an up-vector swap and a 0.5° yaw error (branch `chore/check-full`, 1 Nov 2026).
 - Collection errors without pybullet: test modules that import pybullet (directly or through `sim.camera` / `sim.maze`) use `pytest.importorskip("pybullet")`, and `test_config.py` uses `pytest.importorskip("yaml")`. Global Python 3.12 without pybullet or yaml: 37 passed, 8 skipped, 0 collection errors (was 8 collection errors; branch `chore/check-full`, 1 Nov 2026).
+- Slow scene checks easy to forget: `scripts/check.ps1` prints the Python it uses and the pytest skip count, and the default run ends with "scene tests skipped: run scripts/check.ps1 -Full before merging". `-Full` sets `NIDAR_SCENE_TESTS=1`, runs pytest with `-rs`, fails with "pybullet missing: activate .venv and run again" when pybullet is absent, and fails on any skip whose reason is not in `$FullSkipAllowlist` (empty).
 
 **Only on the unmerged branch `fix/trajectory-clearance` (commit `0483528`), not on `main`; replaced by `fix/trajectory-v2` below:**
 - Survivor 3D clearance in `TrajectorySampler` (applies only when the caller passes the survivors), and survivors never placed on the start cell.
@@ -106,6 +107,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Raw non-metric depth: `camera.py` returns the raw depth buffer, not metres, although documented as linear.
 - Texture memory growth: `randomize.py` loads new textures every sequence and never frees them.
 - No frame/dataset generator: nothing yet passes survivors to the sampler or writes a dataset.
+- `check.ps1 -Full` fails on a fresh clone: the 4 live-output tests in `test_detection_output.py` skip ("No live detections.jsonl found") until the baseline detector has written its output under the gitignored `outputs/` (seen in a `git archive` copy, 1 Nov 2026).
 
 **Removed:** `gcs/` (ground-station stubs, out of scope). `AGENTS.md` (this file is the only agent context).
 
@@ -131,7 +133,7 @@ data_tools/         [PLANNED] cutouts, compositor, dataset builder, inspection
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
 docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
-scripts/            [exists] check.ps1 (ruff check + ruff format --check + pytest), check_env.py, verify_environment.py, download_weights.py, check_sim.py, sim_preview.py, setup scripts. [PLANNED] export, benchmark
+scripts/            [exists] check.ps1 (ruff check + ruff format --check + pytest; -Full adds the scene checks), check_env.py, verify_environment.py, download_weights.py, check_sim.py, sim_preview.py, setup scripts. [PLANNED] export, benchmark
 requirements/       [exists] requirements-base.txt, requirements-cv.txt, requirements-sim.txt (pybullet), requirements-pi.txt (Pi runtime, TBD items), requirements-dev.txt (requirements.txt + sim + ruff, pytest, pre-commit)
 requirements.txt    [exists] base + cv
 .pre-commit-config.yaml  [exists] ruff-check and ruff-format hooks (ruff-pre-commit v0.16.10)
@@ -148,7 +150,8 @@ python -m cv.detectors.detect_survivors --source data/samples/ # baseline detect
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)
 $env:NIDAR_SCENE_TESTS = "1"; pytest -q tests/test_sim/test_trajectory_scenes.py   # 8 layouts x 20 seeds trajectory checks
-.\scripts\check.ps1                                           # ruff check + ruff format --check + pytest (PowerShell)
+.\scripts\check.ps1                                           # fast: ruff check + ruff format --check + pytest, scene checks skipped (before every commit)
+.\scripts\check.ps1 -Full                                     # everything incl. scene checks; fails on any non-allowlisted skip (before asking to merge)
 ```
 
 ## 8. Handoff interface (what the controls team will call)
@@ -191,3 +194,4 @@ Per-frame JSON output follows README Section 8 (frame_id, timestamps, frame size
 9. Keep README claims aligned with reality: [DONE] only if it exists and ran, otherwise [PLANNED].
 10. If you discover a contradiction between this file and the repo, tell me and fix the file, not the other way round, unless I say otherwise.
 11. Update Section 6 (Status) in the same commit as the change that alters the status.
+12. Run `scripts/check.ps1 -Full` before asking the owner to merge, and show its output. The default `check.ps1` skips the heavy scene checks.
