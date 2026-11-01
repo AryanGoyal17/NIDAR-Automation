@@ -1,0 +1,93 @@
+# configs/coco.yaml — Real-photo assets from COCO val2017
+#
+# COCO sanity set, not arena. COCO photos are a regression and sanity check
+# (does the fine-tuned model still find real people?), never a measure of
+# arena performance. See docs/decisions/007_real_data_sources.md.
+#
+# Used by data_tools/get_coco.py, coco_split.py, coco_person_sets.py,
+# make_person_cutouts.py, leakage.py and coco_sheets.py.
+
+# Box-size limits are not copied here: they are read from this file's
+# labels section (imgsz, min_box_height_px, min_box_width_px), so COCO and
+# simulation labels follow the same rule.
+arena_config: configs/arena.yaml
+
+paths:
+  root: data/coco                                    # downloads and DOWNLOAD.json
+  images_zip: data/coco/val2017.zip                  # images are read from the zip, never extracted
+  instances: data/coco/annotations/instances_val2017.json
+  captions: data/coco/annotations/captions_val2017.json
+  split: data/coco/split.json
+  person_sets: data/coco_person                      # anchor/ and sanity/ YOLO sets, anchor.yaml, sanity.yaml
+  cutouts: data/coco_cutouts                         # RGBA PNGs and manifest.json
+
+download:
+  urls:
+    - http://images.cocodataset.org/zips/val2017.zip
+    - http://images.cocodataset.org/annotations/annotations_trainval2017.zip
+  chunk_bytes: 1048576                               # 1 MiB streaming chunks
+  # Members extracted from the annotations zip (everything else stays zipped)
+  extract:
+    - annotations/instances_val2017.json
+    - annotations/captions_val2017.json
+
+# Disk guard for every large step: stop if less than this would remain free
+# on the output drive after the step (owner's rule, 2 Nov 2026). Units are decimal
+# GB (10^9 bytes).
+disk:
+  min_free_gb: 1.0
+  # Stop and ask before writing a set whose estimated size is above this
+  # (re-run with --yes after the owner agrees).
+  confirm_above_gb: 0.5
+
+# Split of val2017 image ids into three disjoint groups by a seeded hash of
+# the id: u = first 64 bits of sha256("<seed>:<image_id>") / 2^64.
+# Stable if images are added or removed: each id's group depends only on the
+# seed and the id.
+split:
+  seed: 2026
+  fractions:                                         # ASSUMPTION: 40/40/20, no measured reason yet
+    cutout_source: 0.40
+    anchor: 0.40
+    sanity: 0.20
+
+# Anchor (training) and sanity (held-out, never trained on) YOLO sets.
+# An image is used only if EVERY non-crowd person in it is kept; one
+# too-small person or any person crowd region excludes the whole image.
+person_sets:
+  copy_mode: copy                                    # original JPEG bytes, unchanged (sha256 = zip member)
+  negatives:                                         # person-free images added as negatives
+    anchor: 300                                      # ASSUMPTION
+    sanity: 100                                      # ASSUMPTION
+  # A person-free candidate is dropped if any caption matches one of these
+  # words (whole word, case-insensitive): COCO sometimes misses people.
+  caption_person_words:                              # ASSUMPTION: hand-written list, not tuned
+    [person, persons, people, man, men, woman, women, boy, boys, girl, girls,
+     child, children, kid, kids, baby, babies, toddler, guy, guys, lady, ladies,
+     gentleman, adult, adults, teenager, player, players, skier, skiers, surfer,
+     surfers, skateboarder, snowboarder, rider, riders, crowd, someone, somebody,
+     he, she, his, her, him, chef, cook, couple, family, pedestrian, pedestrians]
+  # A person-free candidate is also dropped if this pretrained detector finds a
+  # person in it. Used only to exclude suspicious negatives, never to label.
+  detector:
+    weights: models/yolo11n.pt
+    conf: 0.5                                        # owner's choice, 2 Nov 2026
+    imgsz: 640                                       # ASSUMPTION: the pretrained model's native size
+    device: null                                     # null = Ultralytics picks (GPU if available)
+  # Report only: share of person boxes under this height at imgsz
+  small_box_report_px: 40
+
+# RGBA person cutouts, only from the cutout_source group.
+cutouts:
+  min_source_height_px: 150                          # COCO box height in the source photo
+  border_margin_px: 2                                # ASSUMPTION: box this close to the image edge counts as touching
+  # Largest share of this person's box covered by any other person box
+  # (crowd regions included): intersection area / this box area.
+  max_overlap_fraction: 0.10                         # ASSUMPTION
+  # Smallest mask area as a share of the COCO box area
+  min_mask_fraction: 0.30                            # ASSUMPTION
+  wide_aspect: 1.2                                   # w/h above this is reported as wide (possible lying person)
+
+# Leakage check: near-duplicate warning threshold for the 64-bit dHash
+leakage:
+  dhash_max_distance: 4

@@ -160,6 +160,11 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
   - **Contact sheet:** `outputs/scratch/generator/contact_sheet_gen40_w1.png` (gitignored).
 - Tests: `tests/test_sim/test_generator.py` (fast, 160x90: same args identical, workers 1 = 2, written labels = in-memory labels, empty label file only for negatives, always-ambiguous labeller writes nothing, resume, refused arguments, failing scene) and `tests/test_sim/test_generator_scenes.py` (`NIDAR_SCENE_TESTS=1`: replay, memory).
 
+**On branch `feat/coco-assets` (real-photo assets from COCO val2017, not merged). COCO sanity set, not arena: COCO photos are a regression and sanity check, never an arena score. Rules and reasons: `docs/decisions/007_real_data_sources.md` [PLANNED in this branch's last commit].**
+- `configs/coco.yaml` (every value ASSUMPTION unless marked as the owner's choice) and `data_tools/coco_common.py` (config, annotation index, `ImageZip`, split hash, xywh to YOLO, size limits read from `arena.yaml labels`, sha256, 64-bit dHash, disk guard). Disk guard in decimal GB: every large step stops if less than `disk.min_free_gb` (1.0) would remain free, and a set estimated above `disk.confirm_above_gb` (0.5) is not written without `--yes`.
+- `data_tools/get_coco.py`: the only setup-time download (val2017.zip, annotations_trainval2017.zip into `data/coco/`). Streams in 1 MiB chunks, hashes while streaming, resumes a `.part` file when the server answers 206 and restarts on 200, checks the byte count, records url/bytes/sha256/UTC time in `data/coco/DOWNLOAD.json` (sha256 recorded, not verified: no official checksum known, TBD). Skips existing files. Extracts only `instances_val2017.json` and `captions_val2017.json` (zip-slip check); `val2017.zip` stays zipped. A blocked download exits 3 with no substitute source. Tests: `test_get_coco.py` (fake `urlopen`: fresh, resume, restart, short body, blocked, unsafe member).
+- `data/README.md` (committed, the only file under `data/`): licence terms (annotations CC BY 4.0, images from Flickr under their own licences, internal research use only, never committed or redistributed).
+
 **Known open defects on `main`:**
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Survivor parts inside walls (`labelfix/report.md` §6; the 16 scenes of the 256-frame protocol, re-rendered at 640x360): 30 of 48 survivors have a body-part box overlapping a wall box (lying_supine 15/15, lying_prone 15/16, standing 0/5, sitting 0/10, lying_lateral 0/2). Checked by box overlap with boxes shrunk by 3 cm to skip PyBullet AABB margins; this is an upper bound, because a rotated capsule's AABB is larger than the capsule. This inflates occlusion values until the posture geometry (C2) is rebuilt.
@@ -189,10 +194,10 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 ## 7. Repo layout and commands
 
 ```
-configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
+configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, coco.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
 cv/                 [exists] config.py, logger.py, detectors/, utils/ (empty). [PLANNED] eval/, tracking/, train/, depth, detector_api.py
 sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (dataset runs), layouts/. [PLANNED] clutter
-data_tools/         [exists] draw_boxes (contact sheets), check_generated (run validation + stats). [PLANNED] cutouts, compositor, dataset builder
+data_tools/         [exists] draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download). [PLANNED] cutouts, compositor, dataset builder
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
 docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
@@ -202,7 +207,7 @@ requirements.txt    [exists] base + cv
 .pre-commit-config.yaml  [exists] ruff-check and ruff-format hooks (ruff-pre-commit v0.16.10)
 notebooks/          [exists, empty]
 tests/              [exists] test_cv/, test_sim/, test_data_tools/, test_interfaces/ (empty)
-data/  models/  outputs/   [exist, gitignored, never committed]. data/test_real/ is PLANNED; models/ holds local weights.
+data/  models/  outputs/   [exist, gitignored, never committed; only data/README.md is committed]. data/coco/ holds the COCO download; data/test_real/ is PLANNED; models/ holds local weights.
 ```
 
 ```bash
@@ -212,6 +217,7 @@ python scripts/check_env.py                                   # environment heal
 python -m sim.generator --out data/sim_raw/run1 --scenes 40 --frames-per-scene 12 --seed 2026 --workers 4   # synthetic dataset (re-run resumes)
 python -m data_tools.check_generated --run data/sim_raw/run1 --stats         # validate a run (exit 1 if invalid) + statistics
 python -m data_tools.draw_boxes --run data/sim_raw/run1 --out sheet.png --tiles 24   # contact sheet from the written files
+python -m data_tools.get_coco                                 # setup only: COCO val2017 into data/coco/ (the only download)
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)
