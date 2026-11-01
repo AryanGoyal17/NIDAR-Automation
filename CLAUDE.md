@@ -129,6 +129,17 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
   - RSS after 0/10/20/30 scenes: 73.1/74.2/76.7/76.9 MB (heavy test run).
   - From scene 10 to 30, a client per scene grew 0.8 and 1.3 MB (scratch runs). The old pattern (one client, textures re-applied) grew 18.4 and 18.2 MB, about 0.9 MB per scene.
   - The test allows 8 MB (ASSUMPTION, between the two).
+- `data_tools/`:
+  - `check_generated.py` reads only the written files. It checks:
+    - every image has a label file and a meta line, and the other way round;
+    - label lines: 5 fields, class 0, values in [0, 1], box inside the image, at least 1 px each side;
+    - label files equal the meta labels;
+    - an empty label file only for a negative, and no dropped labels in written frames;
+    - image size, and no duplicate ids, image bytes or poses within a scene;
+    - each scene summary matches its meta lines.
+  - `check_generated.py` prints counts per mode and per category. `--stats` adds acceptance, retries, box size at imgsz, truncation/occlusion/contrast histograms, yields per mode and posture, far-speck attempts and phase timing.
+  - `draw_boxes.py` draws the label-file boxes on the written JPEGs (seeded tiles, modes in turn); meta.jsonl supplies only the captions.
+  - Tests: `tests/test_data_tools/test_check_generated.py`.
 - Tests: `tests/test_sim/test_generator.py` (fast, 160x90: same args identical, workers 1 = 2, written labels = in-memory labels, empty label file only for negatives, always-ambiguous labeller writes nothing, resume, refused arguments, failing scene) and `tests/test_sim/test_generator_scenes.py` (`NIDAR_SCENE_TESTS=1`: replay, memory).
 
 **Known open defects on `main`:**
@@ -164,7 +175,7 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
 cv/                 [exists] config.py, logger.py, detectors/, utils/ (empty). [PLANNED] eval/, tracking/, train/, depth, detector_api.py
 sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (dataset runs), layouts/. [PLANNED] clutter
-data_tools/         [PLANNED] cutouts, compositor, dataset builder, inspection
+data_tools/         [exists] draw_boxes (contact sheets), check_generated (run validation + stats). [PLANNED] cutouts, compositor, dataset builder
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
 docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
@@ -173,7 +184,7 @@ requirements/       [exists] requirements-base.txt, requirements-cv.txt, require
 requirements.txt    [exists] base + cv
 .pre-commit-config.yaml  [exists] ruff-check and ruff-format hooks (ruff-pre-commit v0.16.10)
 notebooks/          [exists, empty]
-tests/              [exists] test_cv/, test_sim/, test_interfaces/ (empty)
+tests/              [exists] test_cv/, test_sim/, test_data_tools/, test_interfaces/ (empty)
 data/  models/  outputs/   [exist, gitignored, never committed]. data/test_real/ is PLANNED; models/ holds local weights.
 ```
 
@@ -182,6 +193,8 @@ pip install -r requirements/requirements-dev.txt              # dev laptop setup
 pre-commit install                                            # once per clone: ruff hook on every commit
 python scripts/check_env.py                                   # environment health
 python -m sim.generator --out data/sim_raw/run1 --scenes 40 --frames-per-scene 12 --seed 2026 --workers 4   # synthetic dataset (re-run resumes)
+python -m data_tools.check_generated --run data/sim_raw/run1 --stats         # validate a run (exit 1 if invalid) + statistics
+python -m data_tools.draw_boxes --run data/sim_raw/run1 --out sheet.png --tiles 24   # contact sheet from the written files
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)
