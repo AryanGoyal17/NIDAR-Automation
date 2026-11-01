@@ -106,6 +106,19 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - `generate_sequence` is for replay and tracking tests only: a self-avoiding walk over the corridor graph (no cell re-entered). At a survivor it stops at the last accepted pose and, by default, adds up to 12 in-place yaw frames of 10 degrees. It ends when there is no unvisited neighbour, and it returns at least `trajectory.min_sequence_frames` (20) frames or raises `SequenceSkipped` with a logged reason. Seeded start-cell retries are deterministic. All four values are in `arena.yaml` as ASSUMPTION. Measured 1 Nov 2026, 8 layouts x 20 seeds, 3 survivors, 60 frames: 0 skipped, 13/160 shorter than 60 (min 39), repeated (x, y, yaw) 0, 0 poses within 0.35 m of a survivor box (`0483528`: 15 one-frame sequences, 1356 repeated positions).
 - `camera.py`: axis maths shared through `camera_axes` (renders byte-identical before and after, pinned by `TestRenderPinned`), and `project_aabb` / `projected_box_fraction` (box to image rectangle, within 2 px of the rendered mask box in `TestBoxProjection`).
 
+**On branch `feat/generator` (Task 3, not merged):**
+- `configs/generator.yaml` (every value ASSUMPTION): render 640x360 with the arena FOV, label thresholds at imgsz 416, JPEG quality 95. Layouts: the 6 hand-made ones or a seeded random maze (probability 0.5, 7–15 rows and columns). 0/1/2/3 survivors with weights 0.10/0.30/0.30/0.30. Frame modes aimed 0.55, free 0.20, negative 0.25. Aimed camera 0.6–3.5 m from the survivor's box centre, bearing within 0.6 × half the horizontal FOV. Up to 5 retries per frame.
+- `sim/generator.py`, scenes and frames in memory:
+  - `derive_seed` is 63 bits of sha256 over (master seed, scene, stream, frame, attempt), with separate streams for layout, maze, randomisation, survivors, count, mode, pose and augmentation. A scene is a pure function of (master seed, scene index, config). The same master seed gives different pose draws in different scenes and layouts (tested; the old shared-seed behaviour is pinned in a test).
+  - `plan_scene` chooses the layout and survivor count.
+  - `Scene` builds a new PyBullet DIRECT client per scene (textures, lighting, survivors, sampler with survivor boxes, camera, one `SilhouetteRenderer`) and disconnects it on close.
+  - Modes:
+    - aimed: distance, bearing, `pose_rejection`, survivor centre inside the frame, and a `p.rayTest` line of sight.
+    - free: `sample_poses`.
+    - negative: `sample_poses` candidates with no survivor box in view along a clear ray; survivors behind walls give hard negatives.
+  - `classify`: ambiguous if any present survivor is dropped, positive with kept labels, negative with nothing present. `generate_frame` retries ambiguous frames and mode mismatches. After 5 retries the slot is skipped, so an ambiguous frame is never accepted (tested with an always-ambiguous labeller).
+  - Tests: `tests/test_sim/test_generator.py`.
+
 **Known open defects on `main`:**
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Survivor parts inside walls (`labelfix/report.md` §6; the 16 scenes of the 256-frame protocol, re-rendered at 640x360): 30 of 48 survivors have a body-part box overlapping a wall box (lying_supine 15/15, lying_prone 15/16, standing 0/5, sitting 0/10, lying_lateral 0/2). Checked by box overlap with boxes shrunk by 3 cm to skip PyBullet AABB margins; this is an upper bound, because a rotated capsule's AABB is larger than the capsule. This inflates occlusion values until the posture geometry (C2) is rebuilt.
@@ -136,9 +149,9 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 ## 7. Repo layout and commands
 
 ```
-configs/            [exists] default.yaml, arena.yaml, randomization.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
+configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
 cv/                 [exists] config.py, logger.py, detectors/, utils/ (empty). [PLANNED] eval/, tracking/, train/, depth, detector_api.py
-sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, layouts/. [PLANNED] generator, clutter
+sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (scenes, modes, retries), layouts/. [PLANNED] clutter
 data_tools/         [PLANNED] cutouts, compositor, dataset builder, inspection
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED

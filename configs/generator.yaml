@@ -1,0 +1,72 @@
+# ==============================================================================
+# NIDAR AirMouse — Synthetic Dataset Generator Configuration (sim/generator.py)
+# ==============================================================================
+# Every value here is an ASSUMPTION (no measured basis yet) unless its comment
+# says otherwise. Arena geometry, camera FOV, survivor build and label
+# thresholds come from configs/arena.yaml; textures, lighting and frame
+# augmentation from configs/randomization.yaml. The sha256 of all three files
+# is recorded in each run's manifest (config_hash).
+#
+# Spatial units are metres, angles degrees.
+# ==============================================================================
+
+# Config files the generator builds scenes from
+arena_config: configs/arena.yaml
+randomization_config: configs/randomization.yaml
+
+# --- Frames ------------------------------------------------------------------
+render:
+  width: 640                    # ASSUMPTION: render cost 445 ms/frame vs 1907 ms at 1280x720 (labelfix report, 1 Nov 2026)
+  height: 360                   # ASSUMPTION: same 16:9 aspect as arena.yaml camera; FOV from arena.yaml
+
+# Training size used by the label thresholds (overrides arena.yaml labels.imgsz)
+imgsz: 416                      # Decision (CLAUDE.md section 4)
+
+# JPEG quality of the written images (augmentation may already add JPEG artefacts)
+jpeg_quality: 95                # ASSUMPTION
+
+# --- Scenes ------------------------------------------------------------------
+layouts:
+  handmade_dir: sim/layouts     # the 6 hand-made layouts, picked uniformly
+  random_prob: 0.5              # ASSUMPTION: share of scenes with a seeded random maze
+  random_rows: [7, 15]          # ASSUMPTION: grid rows (even values are rounded up to odd)
+  random_cols: [7, 15]          # ASSUMPTION: grid columns
+
+survivors:
+  # Probability of 0, 1, 2, 3 survivors per scene
+  count_weights: [0.10, 0.30, 0.30, 0.30]   # ASSUMPTION: about 10 % survivor-free scenes
+
+# --- Frame modes -------------------------------------------------------------
+# aimed: camera pointed at a chosen survivor; free: TrajectorySampler.sample_poses;
+# negative: a pose with no survivor in the render. Scenes without survivors
+# use negative for every frame.
+modes:
+  aimed: 0.55                   # ASSUMPTION
+  free: 0.20                    # ASSUMPTION
+  negative: 0.25                # ASSUMPTION
+
+camera:
+  height_range: [0.6, 1.0]      # ASSUMPTION: sample_poses default
+  pitch_range: [-35.0, -25.0]   # ASSUMPTION: sample_poses default, +-5 deg around arena tilt 30 deg
+  roll_jitter_deg: 3.0          # ASSUMPTION: sample_poses default
+  yaw_jitter_deg: 12.0          # ASSUMPTION: sample_poses default (free and negative modes)
+
+aimed:
+  # Horizontal distance from the camera to the centre of the survivor's 3D box
+  distance_m: [0.6, 3.5]        # ASSUMPTION
+  # Yaw offset from the bearing to the survivor, as a fraction of half the
+  # horizontal FOV (keeps the survivor away from the frame edge)
+  bearing_fraction_of_half_hfov: 0.6   # ASSUMPTION
+  # Candidate poses drawn per attempt before giving up (no render for rejected candidates)
+  candidates_per_attempt: 200   # ASSUMPTION
+
+negative:
+  # Candidate poses (sample_poses) checked per attempt for no visible survivor
+  candidates_per_attempt: 50    # ASSUMPTION
+
+# --- Retries -----------------------------------------------------------------
+# A frame that is ambiguous (a survivor present but its label dropped) or does
+# not match its mode is re-drawn with a new pose; after max_retries the frame
+# slot is skipped and nothing is written.
+retries:
+  max_retries: 5                # ASSUMPTION
