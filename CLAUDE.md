@@ -84,7 +84,7 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 - Truncation/occlusion always 0: `labels.py` never computes them, so its filters never fire.
 - Raw non-metric depth: `camera.py` returns the raw depth buffer, not metres, although documented as linear.
 - Texture memory growth: `randomize.py` loads new textures every sequence and never frees them.
-- Lint: 35 ruff errors and 15 unformatted files (measured 30 Oct 2026); nothing enforces lint yet.
+- Lint (fixed): ruff check 0 errors, ruff format 0 unformatted (46 files, measured 1 Nov 2026 on `main`). Enforced by the pre-commit hook (ruff 0.16.10, run `pre-commit install` once per clone) and `scripts/check.ps1`.
 
 **Removed:** `gcs/` (ground-station stubs, out of scope). `AGENTS.md` (this file is the only agent context).
 
@@ -118,10 +118,13 @@ data/  models/  outputs/   [exist, gitignored, never committed]. data/test_real/
 ```
 
 ```bash
+pip install -r requirements/requirements-dev.txt              # dev laptop setup (install torch first, see README §4)
+pre-commit install                                            # once per clone: ruff hook on every commit
 python scripts/check_env.py                                   # environment health
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
-ruff check . ; ruff format --check .                           # lint and format
+python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests
+.\scripts\check.ps1                                           # ruff check + ruff format --check + pytest (PowerShell)
 ```
 
 ## 8. Handoff interface (what the controls team will call)

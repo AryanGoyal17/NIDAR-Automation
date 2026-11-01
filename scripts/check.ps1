@@ -16,7 +16,7 @@ Write-Host "============================================================" -Foreg
 Write-Host "  Python: $pythonExe"
 
 Write-Host "`n[1/3] Running Ruff linter..." -ForegroundColor Yellow
-ruff check .
+& $pythonExe -m ruff check .
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[FAIL] Ruff linting failed." -ForegroundColor Red
     exit $LASTEXITCODE
@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "[PASS] Ruff linting clean." -ForegroundColor Green
 
 Write-Host "`n[2/3] Running Ruff formatting check..." -ForegroundColor Yellow
-ruff format --check .
+& $pythonExe -m ruff format --check .
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[FAIL] Ruff format check failed." -ForegroundColor Red
     exit $LASTEXITCODE

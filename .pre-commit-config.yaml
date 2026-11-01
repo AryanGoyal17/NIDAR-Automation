@@ -1,10 +1,12 @@
 # See https://pre-commit.com for more information
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.0
+    rev: v0.16.10  # keep in sync with ruff in requirements/requirements-dev.txt
     hooks:
       # Run the linter
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
+        # toml added so pyproject.toml is checked, matching `ruff check .` in scripts/check.ps1
+        types_or: [python, pyi, jupyter, toml]
       # Run the formatter
       - id: ruff-format

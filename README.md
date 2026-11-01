@@ -163,7 +163,7 @@ CPU only: `pip install torch torchvision`.
 4. **Install the remaining dependencies**
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements/requirements-dev.txt
 ```
 
 5. **Download pretrained model weights (offline setup)**
