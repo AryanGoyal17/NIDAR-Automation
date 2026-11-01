@@ -2,7 +2,7 @@
 
 > Project context for Claude Code (the only AI coding tool used on this repo) and for new chats. Read it fully before doing any task.
 > Keep it current: when a decision, status line or open question changes, edit this file in the same commit.
-> Last reviewed: 30 Oct 2026.
+> Last reviewed: 1 Nov 2026.
 
 ## 1. What this repo is
 
@@ -75,16 +75,26 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 - `randomize.py`: textures, lighting and frame augmentation.
 - `labels.py`: YOLO labels from segmentation masks.
 - `scripts/sim_preview.py`, `configs/arena.yaml`, `configs/randomization.yaml`.
-- pytest on 30 Oct 2026: 119 passed.
+- pytest on `main`, 1 Nov 2026: 120 passed.
 
-**Known defects** (full evidence: local file `outputs/scratch/scan_report.md`, gitignored, only on the owner's machine):
-- Light direction sign: `arena.yaml` and `randomization.yaml` put the light below the floor, so the floor is lit by ambient light only.
+Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 Oct) and `outputs/scratch/fix_status_report.md` (1 Nov), gitignored, only on the owner's machine.
+
+**Fixed on `main`:**
+- Light direction: `arena.yaml` and the randomiser now put the light above the floor (untextured floor grey 112, was 39). The specular coefficient now reaches the renderer.
+- Lint: ruff check 0 errors, ruff format 0 unformatted (46 files, measured 1 Nov 2026 on `main`). Enforced by the pre-commit hook (ruff 0.16.10, run `pre-commit install` once per clone) and `scripts/check.ps1`.
+
+**Only on the unmerged branch `fix/trajectory-clearance` (commit `0483528`), not on `main`:**
+- Survivor 3D clearance in `TrajectorySampler` (applies only when the caller passes the survivors), and survivors never placed on the start cell.
+- Known regression on that branch: with survivors passed, 15 of 160 test sequences collapse to 1 frame, and repeated positions rise from 18 to 1356. A survivor plus 0.6 m clearance blocks a 1.5 m corridor.
+
+**Known open defects on `main`:**
+- Camera inside survivors: no survivor clearance check, and survivors can sit on the start cell (22 of 160 test scenes).
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
-- Camera inside survivors: survivors and trajectories share cell centres, and there is no survivor clearance check.
 - Truncation/occlusion always 0: `labels.py` never computes them, so its filters never fire.
+- Textured floors dark: `apply_to_sim` textures are multiplied by the floor body colour (0.45), and the floor texture colour ranges are dark (textured floor grey 14–32, measured 1 Nov 2026).
 - Raw non-metric depth: `camera.py` returns the raw depth buffer, not metres, although documented as linear.
 - Texture memory growth: `randomize.py` loads new textures every sequence and never frees them.
-- Lint (fixed): ruff check 0 errors, ruff format 0 unformatted (46 files, measured 1 Nov 2026 on `main`). Enforced by the pre-commit hook (ruff 0.16.10, run `pre-commit install` once per clone) and `scripts/check.ps1`.
+- No frame/dataset generator: nothing yet passes survivors to the sampler or writes a dataset.
 
 **Removed:** `gcs/` (ground-station stubs, out of scope). `AGENTS.md` (this file is the only agent context).
 
@@ -110,8 +120,10 @@ data_tools/         [PLANNED] cutouts, compositor, dataset builder, inspection
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
 docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
-scripts/            [exists] check_env.py, verify_environment.py, download_weights.py, check_sim.py, sim_preview.py, setup scripts. [PLANNED] export, benchmark
-requirements/       [exists] modular requirements
+scripts/            [exists] check.ps1 (ruff check + ruff format --check + pytest), check_env.py, verify_environment.py, download_weights.py, check_sim.py, sim_preview.py, setup scripts. [PLANNED] export, benchmark
+requirements/       [exists] requirements-base.txt, requirements-cv.txt, requirements-sim.txt (pybullet), requirements-pi.txt (Pi runtime, TBD items), requirements-dev.txt (requirements.txt + sim + ruff, pytest, pre-commit)
+requirements.txt    [exists] base + cv
+.pre-commit-config.yaml  [exists] ruff-check and ruff-format hooks (ruff-pre-commit v0.16.10)
 notebooks/          [exists, empty]
 tests/              [exists] test_cv/, test_sim/, test_interfaces/ (empty)
 data/  models/  outputs/   [exist, gitignored, never committed]. data/test_real/ is PLANNED; models/ holds local weights.
@@ -161,9 +173,9 @@ Per-frame JSON output follows README Section 8 (frame_id, timestamps, frame size
 3. Run the tests or commands you wrote and show the real output. Never claim something works without running it. Say clearly what you could not test (for example hardware you do not have).
 4. **Never invent numbers, metrics, benchmark results, or facts about the rulebook.** If a value is unknown, write TBD or an `# ASSUMPTION` comment and add it to Section 5.
 5. Do not add cloud calls, telemetry, or downloads at runtime. Weights and datasets are fetched once during setup.
-6. Work on a feature branch, never directly on `main`. Merge into `main` (fast-forward) only after the task is done and checked.
-7. Before every commit, `ruff check .`, `ruff format --check .` and `pytest` must pass. This is enforced from the hygiene commit (I4) onward. Until then, every file a commit touches must be ruff-clean and pytest must pass.
+6. One task = one branch, created from `main` unless the owner names another base. Never commit to a branch that holds other tasks, and never commit directly on `main`. The owner merges into `main`.
+7. Before every commit, `ruff check .`, `ruff format --check .` and `pytest` must pass. This is enforced now by the pre-commit hook (ruff) and `scripts/check.ps1` (ruff + pytest).
 8. Never commit secrets, datasets, weights, or personal information.
 9. Keep README claims aligned with reality: [DONE] only if it exists and ran, otherwise [PLANNED].
 10. If you discover a contradiction between this file and the repo, tell me and fix the file, not the other way round, unless I say otherwise.
-11. At the end of a task, update Section 6 (Status) if the status changed.
+11. Update Section 6 (Status) in the same commit as the change that alters the status.
