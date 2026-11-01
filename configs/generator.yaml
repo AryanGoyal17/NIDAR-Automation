@@ -55,7 +55,7 @@ camera:
 aimed:
   # Horizontal distance from the camera to the centre of the survivor's 3D box
   distance_m: [0.6, 3.5]        # ASSUMPTION
-  distance_sampling: uniform    # uniform | log_uniform (log-uniform favours near distances less)
+  distance_sampling: uniform    # uniform | log_uniform (equal draws per distance ratio, e.g. 1-2 m as often as 3-6 m)
   # Yaw offset from the bearing to the survivor, as a fraction of half the
   # horizontal FOV (keeps the survivor away from the frame edge)
   bearing_fraction_of_half_hfov: 0.6   # ASSUMPTION
