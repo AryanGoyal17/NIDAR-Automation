@@ -140,12 +140,30 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
   - `check_generated.py` prints counts per mode and per category. `--stats` adds acceptance, retries, box size at imgsz, truncation/occlusion/contrast histograms, yields per mode and posture, far-speck attempts and phase timing.
   - `draw_boxes.py` draws the label-file boxes on the written JPEGs (seeded tiles, modes in turn); meta.jsonl supplies only the captions.
   - Tests: `tests/test_data_tools/test_check_generated.py`.
+- Measured run, 2 Nov 2026, at `88894a0`. 40 scenes × 12 frames, seed 2026, default `generator.yaml` (640x360). All timings: power plan Balanced, plugged in (AC), at start and end. Full report: `outputs/scratch/generator/report.md` (gitignored).
+  - **Workers:** 1/2/4 workers give identical output (byte-identical files; meta, attempts and summaries equal without timing). Speed 1.11/2.38/4.27 frames/s (wall 429/200/111 s); CPU per worker 95/95/87 % of its busy time. One run each.
+  - **Phase cost:** mean ms per render attempt, 1 worker: render 521, silhouettes 102, augment 85, label_frame 9.
+  - **Yield:**
+    - 480 slots, 559 renders, 476 frames written. Acceptance (written / renders) 85.2 %; retries per written frame mean 0.17.
+    - 4 slots skipped: 2 `ambiguous_after_retries`, 2 `no_valid_pose`.
+    - `check_generated`: valid, 0 errors.
+  - **Positives:** 252 positive and 224 negative frames (188 in survivor scenes, 36 in the 3 survivor-free scenes). 280 kept labels, 11 hard (3.9 %); 80 low-light frames (16.8 %).
+  - **Modes:** realised slot shares in survivor scenes are aimed 53.6 %, free 20.7 %, negative 25.7 % (weights 0.55/0.20/0.25). Aimed gives 98.3 % positives per slot, free 19.6 %.
+  - **Box size at 416:** height min 10.4, p10 30.6, median 77.7, p90 134.0.
+  - **Ambiguity:**
+    - 78 of 335 rendered attempts with a survivor present were ambiguous (23.3 %), all retried and none written.
+    - 58 of the 78 were in low-light scenes. Aimed renders were ambiguous in 51 of 90 in low light and 14 of 209 in normal light, mostly `low_contrast`.
+    - 17 ambiguous attempts had one survivor kept and another dropped. Only 7 of those dropped boxes are under 10 px tall or 6 px wide at 416.
+  - **Truncation:** 13 kept labels have truncation in [0.75, 0.85); the limit 0.85 is unchanged.
+  - **JPEG check:** labelling the JPEG-decoded frame (quality 95) instead of the augmented frame flips 0 of 389 present-survivor decisions over all 559 attempts (scratch script, generator unchanged).
+  - **Metric depth later:** the meta has what it needs (pose, intrinsics, near/far clip, survivor world positions and 3D boxes). The depth buffer can be re-rendered with `replay_frame`'s render call.
+  - **Contact sheet:** `outputs/scratch/generator/contact_sheet_gen40_w1.png` (gitignored).
 - Tests: `tests/test_sim/test_generator.py` (fast, 160x90: same args identical, workers 1 = 2, written labels = in-memory labels, empty label file only for negatives, always-ambiguous labeller writes nothing, resume, refused arguments, failing scene) and `tests/test_sim/test_generator_scenes.py` (`NIDAR_SCENE_TESTS=1`: replay, memory).
 
 **Known open defects on `main`:**
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Survivor parts inside walls (`labelfix/report.md` §6; the 16 scenes of the 256-frame protocol, re-rendered at 640x360): 30 of 48 survivors have a body-part box overlapping a wall box (lying_supine 15/15, lying_prone 15/16, standing 0/5, sitting 0/10, lying_lateral 0/2). Checked by box overlap with boxes shrunk by 3 cm to skip PyBullet AABB margins; this is an upper bound, because a rotated capsule's AABB is larger than the capsule. This inflates occlusion values until the posture geometry (C2) is rebuilt.
-- High ambiguous-frame share: 37.1 % of frames with a survivor present are ambiguous in the 300-frame `sample_poses` set at 1280x720 (43/116; 36.2 %, 42/116 at 640x360) and 47.7 % in the 256-frame protocol (41/86), mainly `box_too_short` (26 frames in set 300 at 1280x720, 15 in the protocol) and `truncated` (16 and 21). Skipping ambiguous frames would discard a third to a half of the frames that contain a survivor. Proposed fixes, not built, part of the generator (Task 3): aimed poses and per-frame resampling.
+- High ambiguous-frame share: 37.1 % of frames with a survivor present are ambiguous in the 300-frame `sample_poses` set at 1280x720 (43/116; 36.2 %, 42/116 at 640x360) and 47.7 % in the 256-frame protocol (41/86), mainly `box_too_short` (26 frames in set 300 at 1280x720, 15 in the protocol) and `truncated` (16 and 21). Skipping ambiguous frames would discard a third to a half of the frames that contain a survivor. On branch `feat/generator`, aimed poses and per-frame resampling bring the written-frame yield to 476 of 480 slots. Ambiguous attempts are retried, never written: 23.3 % of rendered attempts with a survivor present, mostly low-light `low_contrast`.
 - Synthetic survivors are mostly high-contrast: normal-light contrast median 59.3 at 1280x720 (53.9 at 640x360; set 300, n=157); kept labels tagged `hard`: 4/119 (3.4 %) and 5/119 (4.2 %) in set 300 at 1280x720 and 640x360, 4/77 (5.2 %) in the 256-frame protocol. How this compares with real footage is TBD (no real test set yet).
 - Low-light survivors under contrast 3.0 (dropped as `low_contrast`), share of present low-light survivors: set 300 at 1280x720 7/15; set 300 at 640x360 5/15; 256-frame protocol (1280x720) 6/16; phase-A low-light pool (the protocol's low-light survivors plus a forced low-light set of 96 frames, 1280x720) 34/100. So about 33–47 % of low-light survivors fall under contrast 3.0, depending on the sample; the natural samples are small (15 and 16).
 - Saturated floor colours: texture colours are sampled per RGB channel independently, so the wider floor ranges also give strongly tinted floors (for example purple, green).
@@ -162,7 +180,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 **README:** `README.md` exists but is out of date: it still describes the Jetson, RT-DETR and an RGB-only camera. A rewrite is planned.
 
 **Planned (not built yet):**
-- **Next task (Task 3):** frame/dataset generator and clutter (`sim/`). The proposed fixes for the ambiguous-frame share (aimed poses, per-frame resampling; see open defects) belong to it.
+- **Task 3:** the frame/dataset generator is built on branch `feat/generator`, awaiting merge. Clutter (`sim/`) is not built yet.
 - `data_tools/` (cutouts, compositor, dataset builder) and the real test set (`data/test_real/`).
 - `cv/train/`, `cv/eval/`, `cv/tracking/`, the depth module, the detection API.
 - NCNN export and benchmark scripts, `deploy/pi/`, the handoff note.
