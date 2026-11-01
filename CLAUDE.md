@@ -89,8 +89,11 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 - Survivor 3D clearance in `TrajectorySampler` (applies only when the caller passes the survivors), and survivors never placed on the start cell.
 - Known regression on that branch: with survivors passed, 15 of 160 test sequences collapse to 1 frame, and repeated positions rise from 18 to 1356. A survivor plus 0.6 m clearance blocks a 1.5 m corridor.
 
+**Only on the unmerged branch `fix/trajectory-v2` (redo of `0483528`, built from `main`), not on `main`:**
+- Survivors never placed on the start cell (`SurvivorPlacer.place`; 22 of 160 test scenes on `main`, 0 on the branch). Tested in `TestPlacement`.
+
 **Known open defects on `main`:**
-- Camera inside survivors: no survivor clearance check, and survivors can sit on the start cell (22 of 160 test scenes).
+- Camera inside survivors: no survivor clearance check, and survivors can sit on the start cell (22 of 160 test scenes). The start-cell part is fixed on `fix/trajectory-v2`.
 - Broken postures: sitting, supine and prone body parts are misaligned or detached. Lateral pokes into walls. The config posture list is ignored.
 - Truncation/occlusion always 0: `labels.py` never computes them, so its filters never fire.
 - Saturated floor colours: texture colours are sampled per RGB channel independently, so the wider floor ranges also give strongly tinted floors (for example purple, green).

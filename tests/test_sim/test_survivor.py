@@ -7,7 +7,7 @@ Validates:
 2. Count bounds — respects min/max and exact n.
 3. Posture coverage — all postures produce at least one body ID.
 4. Scale jitter — scale stays within ±15 % of nominal.
-5. Placement validity — survivors land on free cells only.
+5. Placement validity — survivors land on free cells only, never on the start cell.
 6. Body ID return — every placed survivor has body IDs.
 7. Removal — remove_all clears all bodies without error.
 """
@@ -175,6 +175,21 @@ class TestPlacement:
                 r, c = s.cell
                 assert maze.grid[r][c] in FREE_CHARS, f"Survivor at ({r},{c}) is on a wall cell"
             placer.remove_all(survivors, maze.physics_client)
+
+    def test_never_on_start_cell(self, maze: MazeResult, placer: SurvivorPlacer) -> None:
+        assert maze.start_cell is not None
+        for seed in range(50):
+            survivors = placer.place(maze, n=6, seed=seed)
+            assert all(s.cell != maze.start_cell for s in survivors), f"seed {seed}"
+            placer.remove_all(survivors, maze.physics_client)
+
+    def test_start_cell_only_free_cell(self, placer: SurvivorPlacer) -> None:
+        builder = MazeBuilder()
+        result = builder.build_from_grid(["###", "#S#", "###"])
+        try:
+            assert placer.place(result, n=3, seed=0) == []
+        finally:
+            p.disconnect(result.physics_client)
 
     def test_no_overlapping_cells(self, maze: MazeResult, placer: SurvivorPlacer) -> None:
         survivors = placer.place(maze, n=3, seed=42)

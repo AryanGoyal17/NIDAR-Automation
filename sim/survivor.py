@@ -637,7 +637,7 @@ class SurvivorPlacer:
         free_cells: list[tuple[int, int]] = []
         for r in range(maze.num_rows):
             for c in range(maze.num_cols):
-                if maze.grid[r][c] in FREE_CHARS:
+                if maze.grid[r][c] in FREE_CHARS and (r, c) != maze.start_cell:
                     free_cells.append((r, c))
 
         if not free_cells:
