@@ -8,6 +8,10 @@ constraints defined in ``configs/arena.yaml``:
 - Yaw aligned predominantly with corridor axes plus configurable jitter.
 - Small roll jitter (and optional banking during turns).
 - Strict collision/safety distance checks rejecting any pose too close to walls.
+- Survivor checks (when survivor 3D boxes are given): a minimum 3D distance from
+  the camera to every survivor box, and a rejection when one survivor's
+  projected box covers too much of the image. Both values come from the
+  ``trajectory`` section of ``arena.yaml``.
 - Smooth trajectory generator producing temporally consecutive sequences of
   poses suitable for multi-frame synthetic video generation.
 
@@ -16,7 +20,8 @@ Usage::
     from sim.trajectory import TrajectorySampler
     sampler = TrajectorySampler("sim/layouts/loop.yaml")
 
-    # Sample random individual poses:
+    # Sample random individual poses (the source of training frames):
+    sampler = TrajectorySampler("sim/layouts/loop.yaml", survivor_boxes=[s.aabb for s in survivors])
     poses = sampler.sample_poses(n=10, seed=42)
 
     # Generate a smooth consecutive flight sequence:
@@ -28,14 +33,43 @@ from __future__ import annotations
 import argparse
 import math
 import random
-from collections import deque
+from collections import Counter, deque
+from collections.abc import Sequence
 from pathlib import Path
 
 from cv.config import load_config
-from sim.camera import CameraPose
+from cv.logger import get_logger
+from sim.camera import CameraPose, PinholeCamera
 from sim.maze import FREE_CHARS, WALL_CHAR, load_layout
 
 DEFAULT_ARENA_CONFIG = Path("configs/arena.yaml")
+
+AABB = tuple[tuple[float, float, float], tuple[float, float, float]]
+
+# Pose rejection reasons (counted and logged by sample_poses).
+REJECT_WALL = "wall"
+REJECT_SURVIVOR_CLEARANCE = "survivor_clearance"
+REJECT_BOX_TOO_LARGE = "box_too_large"
+REJECT_DUPLICATE = "duplicate"
+REJECTION_REASONS = (REJECT_WALL, REJECT_SURVIVOR_CLEARANCE, REJECT_BOX_TOO_LARGE, REJECT_DUPLICATE)
+
+log = get_logger("trajectory")
+
+
+class PoseSamplingError(RuntimeError):
+    """sample_poses could not find the requested number of valid unique poses."""
+
+
+def pose_key(pose: CameraPose) -> tuple[float, float, int]:
+    """Identity of a pose for duplicate checks: (x, y) to 1 cm, yaw to 1 degree."""
+    return (round(pose.x, 2), round(pose.y, 2), round(pose.yaw) % 360)
+
+
+def point_to_aabb_distance(point: tuple[float, float, float], aabb: AABB) -> float:
+    """Euclidean distance from a 3D point to a box (0.0 inside the box)."""
+    lo, hi = aabb
+    d = [max(lo[i] - point[i], 0.0, point[i] - hi[i]) for i in range(3)]
+    return math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
 
 
 # --------------------------------------------------------------------------- #
@@ -54,6 +88,9 @@ class TrajectorySampler:
     min_wall_dist : float, optional
         Minimum clearance distance in metres from any wall surface (safety buffer).
         Default is 0.35m.
+    survivor_boxes : sequence of AABB, optional
+        Real 3D boxes of the placed survivors (``SurvivorInfo.aabb``). Without
+        them no survivor checks are made.
     """
 
     def __init__(
@@ -61,6 +98,7 @@ class TrajectorySampler:
         layout: str | Path | list[str],
         arena_config_path: str | Path = DEFAULT_ARENA_CONFIG,
         min_wall_dist: float = 0.35,
+        survivor_boxes: Sequence[AABB] | None = None,
     ) -> None:
         if isinstance(layout, list):
             self.grid = list(layout)
@@ -76,6 +114,12 @@ class TrajectorySampler:
         self.nominal_height: float = float(cfg.camera.height)
         self.nominal_tilt: float = float(cfg.camera.tilt_deg)
         self.min_wall_dist: float = float(min_wall_dist)
+        self.survivor_clearance_m: float = float(cfg.trajectory.survivor_clearance_m)
+        self.max_survivor_box_fraction: float = float(cfg.trajectory.max_survivor_box_fraction)
+        # Projection only (no rendering): same FOV and aspect as the renders.
+        self.camera = PinholeCamera(arena_config_path)
+        self.survivor_boxes: list[AABB] = []
+        self.set_survivor_boxes(survivor_boxes)
 
         # Precompute free cells and wall bounding boxes
         self.free_cells: list[tuple[int, int]] = []
@@ -95,6 +139,16 @@ class TrajectorySampler:
         if not self.free_cells:
             raise ValueError("Layout has no free corridor cells.")
 
+    def set_survivor_boxes(self, boxes: Sequence[AABB] | None) -> None:
+        """Replace the survivor 3D boxes used by the survivor checks."""
+        self.survivor_boxes = [
+            (
+                (float(lo[0]), float(lo[1]), float(lo[2])),
+                (float(hi[0]), float(hi[1]), float(hi[2])),
+            )
+            for lo, hi in (boxes or [])
+        ]
+
     # -- Coordinate Transformations & Collision Checking --
 
     def cell_to_world_center(self, row: int, col: int) -> tuple[float, float]:
@@ -105,8 +159,40 @@ class TrajectorySampler:
 
     def is_pose_valid(self, x: float, y: float, z: float) -> bool:
         """
-        Check if (x, y, z) is collision-free and maintains min_wall_dist clearance.
+        Check if (x, y, z) keeps min_wall_dist from walls and survivor_clearance_m
+        from every survivor box.
         """
+        return self.position_rejection(x, y, z) is None
+
+    def position_rejection(self, x: float, y: float, z: float) -> str | None:
+        """Reason the camera position is rejected, or None if it is valid."""
+        if not self._clear_of_walls(x, y, z):
+            return REJECT_WALL
+        for box in self.survivor_boxes:
+            if point_to_aabb_distance((x, y, z), box) < self.survivor_clearance_m:
+                return REJECT_SURVIVOR_CLEARANCE
+        return None
+
+    def pose_rejection(self, pose: CameraPose) -> str | None:
+        """
+        Reason the full pose is rejected, or None if it is valid.
+
+        Checks walls (with altitude and world bounds), survivor clearance, then
+        whether any survivor's projected 3D box covers more than
+        max_survivor_box_fraction of the image. The projected AABB is
+        conservative for rotated bodies (see ``PinholeCamera.project_aabb``).
+        """
+        reason = self.position_rejection(pose.x, pose.y, pose.z)
+        if reason is not None:
+            return reason
+        if self.survivor_boxes:
+            fractions = self.camera.projected_box_fractions(pose, self.survivor_boxes)
+            if max(fractions) > self.max_survivor_box_fraction:
+                return REJECT_BOX_TOO_LARGE
+        return None
+
+    def _clear_of_walls(self, x: float, y: float, z: float) -> bool:
+        """Altitude, world bounds and min_wall_dist clearance from wall cells."""
         # Vertical bounds check
         if z < 0.2 or z > (self.wall_height - 0.2):
             return False
@@ -180,73 +266,39 @@ class TrajectorySampler:
 
     # -- Discrete Pose Sampling --
 
-    def sample_pose(
+    def _draw_pose(
         self,
-        rng: random.Random | None = None,
-        height_range: tuple[float, float] = (0.6, 1.0),
-        pitch_range: tuple[float, float] = (-35.0, -25.0),
-        yaw_jitter_deg: float = 12.0,
-        roll_jitter_deg: float = 3.0,
-        centerline_bias: bool = True,
-        max_attempts: int = 50,
+        rng: random.Random,
+        height_range: tuple[float, float],
+        pitch_range: tuple[float, float],
+        yaw_jitter_deg: float,
+        roll_jitter_deg: float,
+        centerline_bias: bool,
     ) -> CameraPose:
-        """
-        Sample a single random valid drone pose inside a free cell.
-
-        Parameters
-        ----------
-        centerline_bias : bool
-            If True, drone position offsets are concentrated towards the
-            corridor centerline using a Gaussian distribution, reflecting
-            natural quadcopter navigation rather than wall-hugging.
-        """
-        if rng is None:
-            rng = random.Random()
-
-        for _ in range(max_attempts):
-            r, c = rng.choice(self.free_cells)
-            cx, cy = self.cell_to_world_center(r, c)
-
-            # Small position perturbation within cell
-            max_offset = max(0.0, (self.cell_size / 2.0) - self.min_wall_dist)
-            if centerline_bias and max_offset > 0.0:
-                sigma = max_offset / 3.0
-                dx = min(max(rng.gauss(0.0, sigma), -max_offset), max_offset)
-                dy = min(max(rng.gauss(0.0, sigma), -max_offset), max_offset)
-            else:
-                dx = rng.uniform(-max_offset, max_offset)
-                dy = rng.uniform(-max_offset, max_offset)
-
-            px = cx + dx
-            py = cy + dy
-
-            pz = rng.uniform(height_range[0], height_range[1])
-
-            if not self.is_pose_valid(px, py, pz):
-                continue
-
-            # Yaw: corridor heading + jitter
-            corridor_headings = self.get_corridor_headings(r, c)
-            base_yaw = rng.choice(corridor_headings)
-            yaw = (base_yaw + rng.uniform(-yaw_jitter_deg, yaw_jitter_deg)) % 360.0
-
-            pitch = rng.uniform(pitch_range[0], pitch_range[1])
-            roll = rng.uniform(-roll_jitter_deg, roll_jitter_deg)
-
-            return CameraPose(x=px, y=py, z=pz, yaw=yaw, pitch=pitch, roll=roll)
-
-        # Fallback to cell center if offset failed
+        """Draw one candidate pose in a random free cell (not checked)."""
         r, c = rng.choice(self.free_cells)
         cx, cy = self.cell_to_world_center(r, c)
-        headings = self.get_corridor_headings(r, c)
-        return CameraPose(
-            x=cx,
-            y=cy,
-            z=self.nominal_height,
-            yaw=headings[0],
-            pitch=-self.nominal_tilt,
-            roll=0.0,
-        )
+
+        # Small position perturbation within cell
+        max_offset = max(0.0, (self.cell_size / 2.0) - self.min_wall_dist)
+        if centerline_bias and max_offset > 0.0:
+            sigma = max_offset / 3.0
+            dx = min(max(rng.gauss(0.0, sigma), -max_offset), max_offset)
+            dy = min(max(rng.gauss(0.0, sigma), -max_offset), max_offset)
+        else:
+            dx = rng.uniform(-max_offset, max_offset)
+            dy = rng.uniform(-max_offset, max_offset)
+
+        pz = rng.uniform(height_range[0], height_range[1])
+
+        # Yaw: corridor heading + jitter
+        base_yaw = rng.choice(self.get_corridor_headings(r, c))
+        yaw = (base_yaw + rng.uniform(-yaw_jitter_deg, yaw_jitter_deg)) % 360.0
+
+        pitch = rng.uniform(pitch_range[0], pitch_range[1])
+        roll = rng.uniform(-roll_jitter_deg, roll_jitter_deg)
+
+        return CameraPose(x=cx + dx, y=cy + dy, z=pz, yaw=yaw, pitch=pitch, roll=roll)
 
     def sample_poses(
         self,
@@ -254,19 +306,67 @@ class TrajectorySampler:
         seed: int | None = None,
         height_range: tuple[float, float] = (0.6, 1.0),
         pitch_range: tuple[float, float] = (-35.0, -25.0),
+        yaw_jitter_deg: float = 12.0,
+        roll_jitter_deg: float = 3.0,
         centerline_bias: bool = True,
+        max_attempts_per_pose: int = 200,
     ) -> list[CameraPose]:
-        """Sample n valid independent camera poses."""
+        """
+        Sample n valid, unique, independent camera poses.
+
+        This is the source of training frames. Every pose passes
+        :meth:`pose_rejection` (walls, survivor clearance, projected box size)
+        and no two poses share a :func:`pose_key`. The result depends only on
+        the seed, the arguments, the layout and the survivor boxes. Rejection
+        counts by reason are logged at INFO level on every call.
+
+        Parameters
+        ----------
+        centerline_bias : bool
+            If True, drone position offsets are concentrated towards the
+            corridor centerline using a Gaussian distribution, reflecting
+            natural quadcopter navigation rather than wall-hugging.
+        max_attempts_per_pose : int
+            Candidate budget is ``n * max_attempts_per_pose``.
+
+        Raises
+        ------
+        PoseSamplingError
+            If n poses are not found within the budget. The message gives the
+            rejection counts by reason.
+        """
         rng = random.Random(seed)
-        return [
-            self.sample_pose(
-                rng=rng,
-                height_range=height_range,
-                pitch_range=pitch_range,
-                centerline_bias=centerline_bias,
+        rejected: Counter[str] = Counter({reason: 0 for reason in REJECTION_REASONS})
+        poses: list[CameraPose] = []
+        keys: set[tuple[float, float, int]] = set()
+        attempts = 0
+        budget = max(1, n * max_attempts_per_pose)
+
+        while len(poses) < n and attempts < budget:
+            attempts += 1
+            pose = self._draw_pose(
+                rng, height_range, pitch_range, yaw_jitter_deg, roll_jitter_deg, centerline_bias
             )
-            for _ in range(n)
-        ]
+            reason = self.pose_rejection(pose)
+            if reason is None and pose_key(pose) in keys:
+                reason = REJECT_DUPLICATE
+            if reason is not None:
+                rejected[reason] += 1
+                continue
+            keys.add(pose_key(pose))
+            poses.append(pose)
+
+        counts = ", ".join(f"{reason}={rejected[reason]}" for reason in REJECTION_REASONS)
+        log.info(
+            f"sample_poses: n={n} seed={seed} accepted={len(poses)} attempts={attempts} "
+            f"survivors={len(self.survivor_boxes)} rejected: {counts}"
+        )
+        if len(poses) < n:
+            raise PoseSamplingError(
+                f"sample_poses found {len(poses)} of {n} poses in {attempts} attempts "
+                f"(seed={seed}); rejected: {counts}"
+            )
+        return poses
 
     # -- Smooth Trajectory Sequence Generation --
 

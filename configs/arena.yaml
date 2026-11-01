@@ -87,6 +87,15 @@ camera:
   # Frame acquisition rate
   fps: 30                       # ASSUMPTION: Standard camera stream frame rate
 
+# --- Camera Pose Sampling (sim/trajectory.py) --------------------------------
+trajectory:
+  # Minimum 3D distance from the camera eye to any survivor's 3D box (metres)
+  survivor_clearance_m: 0.35        # ASSUMPTION: no rulebook value; keeps the camera off and out of bodies
+
+  # Reject a pose when one survivor's projected 3D box covers more than this
+  # fraction of the image (too close for a useful frame)
+  max_survivor_box_fraction: 0.5    # ASSUMPTION: no measured basis yet
+
 # --- Survivor (Target) Specifications ----------------------------------------
 survivor:
   # Physical target nature ("human", "mannequin", or "dummy")
