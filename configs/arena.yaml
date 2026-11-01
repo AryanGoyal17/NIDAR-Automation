@@ -105,6 +105,20 @@ trajectory:
 
 # --- Training Labels (sim/labels.py) -----------------------------------------
 labels:
+  # Pixel thresholds below are at training resolution: the frame letterboxed
+  # to imgsz, scale = imgsz / max(width, height). sim/labels.py converts them
+  # to the render size (at 1280x720 the scale is 0.325, at 640x360 0.65).
+  imgsz: 416                        # Decision (CLAUDE.md section 4): fine-tuned models train at 416
+
+  # Drop a label whose visible box is shorter / narrower than this (px at imgsz).
+  # Width is lower than height: a standing person at range is narrow.
+  min_box_height_px: 10             # ASSUMPTION: no measured detector limit yet
+  min_box_width_px: 6               # ASSUMPTION: no measured detector limit yet
+
+  # A survivor with less visible area than this (px^2 at imgsz) counts as not
+  # in the frame: no label, not dropped, frame not ambiguous
+  presence_min_area_px: 1.6         # ASSUMPTION: about the old 15 px floor at 1280x720 (15.1 px; 3.8 px at 640x360)
+
   # Drop a label when more than this share of the survivor's full silhouette
   # lies outside the frame (measured from a survivor-alone render)
   max_truncation: 0.85              # ASSUMPTION: previous code default; to be revisited with training results

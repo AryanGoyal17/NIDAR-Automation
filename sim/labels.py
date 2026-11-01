@@ -78,6 +78,8 @@ import numpy as np
 OBJECT_ID_MASK: int = 0xFFFFFF
 
 # Default detection quality thresholds
+# Render pixels, for compute_box_for_body_ids / compute_survivor_labels.
+# label_frame uses LabelConfig thresholds at training resolution instead.
 DEFAULT_MIN_VISIBLE_PIXELS: int = 15
 DEFAULT_MIN_BOX_SIZE: float = 6.0  # pixels
 DEFAULT_MAX_OCCLUSION: float = 0.90
@@ -268,8 +270,24 @@ class LabelConfig:
     """
     Label filter settings, from the ``labels`` section of ``configs/arena.yaml``.
 
-    Every value there is an ASSUMPTION; see the comments in that file.
+    Every value there is an ASSUMPTION; see the comments in that file. Pixel
+    thresholds are given at training resolution: the frame letterboxed to
+    ``imgsz`` with scale ``imgsz / max(width, height)``. :meth:`thresholds`
+    converts them to the render size.
     """
+
+    imgsz: int = 416
+    """Training image size (letterboxed, longest side)."""
+
+    min_box_height_px: float = 10.0
+    """Minimum visible box height at training resolution."""
+
+    min_box_width_px: float = 6.0
+    """Minimum visible box width at training resolution."""
+
+    presence_min_area_px: float = 1.6
+    """Visible survivor area (px^2 at training resolution) below which the survivor
+    counts as absent from the frame: neither labelled nor dropped."""
 
     max_truncation: float = DEFAULT_MAX_TRUNCATION
     """Drop a label whose truncation fraction is above this."""
@@ -288,6 +306,24 @@ class LabelConfig:
             raise ValueError(
                 f"labels.max_canvas_area_factor must be >= 1, got {self.max_canvas_area_factor}"
             )
+        if self.imgsz <= 0:
+            raise ValueError(f"labels.imgsz must be > 0, got {self.imgsz}")
+        for name in ("min_box_height_px", "min_box_width_px", "presence_min_area_px"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"labels.{name} must be >= 0, got {getattr(self, name)}")
+
+    def scale(self, width: int, height: int) -> float:
+        """Letterbox scale from a ``width x height`` render to training resolution."""
+        return self.imgsz / float(max(width, height))
+
+    def thresholds(self, width: int, height: int) -> RenderThresholds:
+        """The training-resolution thresholds converted to a ``width x height`` render."""
+        s = self.scale(width, height)
+        return RenderThresholds(
+            min_box_height=self.min_box_height_px / s,
+            min_box_width=self.min_box_width_px / s,
+            presence_min_pixels=self.presence_min_area_px / (s * s),
+        )
 
     @classmethod
     def from_arena_config(cls, path: str | Path = DEFAULT_ARENA_CONFIG) -> LabelConfig:
@@ -300,6 +336,52 @@ class LabelConfig:
         if unknown:
             raise ValueError(f"unknown keys in the labels section of {path}: {unknown}")
         return cls(**{k: type(getattr(cls, k))(v) for k, v in section.items()})
+
+
+@dataclass(frozen=True)
+class RenderThresholds:
+    """:class:`LabelConfig` pixel thresholds in render pixels (see :meth:`LabelConfig.thresholds`)."""
+
+    min_box_height: float
+    min_box_width: float
+    presence_min_pixels: float
+
+
+# Reasons a present survivor's label is dropped (see label_frame).
+DROP_BOX_TOO_SHORT = "box_too_short"
+DROP_BOX_TOO_NARROW = "box_too_narrow"
+DROP_TRUNCATED = "truncated"
+DROP_TRUNCATION_UNBOUNDED = "truncation_unbounded"
+DROP_OCCLUDED = "occluded"
+DROP_REASONS = (
+    DROP_BOX_TOO_SHORT,
+    DROP_BOX_TOO_NARROW,
+    DROP_TRUNCATED,
+    DROP_TRUNCATION_UNBOUNDED,
+    DROP_OCCLUDED,
+)
+
+
+@dataclass
+class DroppedLabel:
+    """A survivor present in the frame whose label was dropped."""
+
+    label: SurvivorLabel
+    """The label it would have had, with its measured values."""
+
+    reasons: tuple[str, ...]
+    """Every rule it failed, in :data:`DROP_REASONS` order."""
+
+
+@dataclass
+class FrameLabels:
+    """Labels of one frame (:func:`label_frame`)."""
+
+    labels: list[SurvivorLabel]
+    """Kept labels."""
+
+    dropped: list[DroppedLabel]
+    """Survivors present in the frame whose label was dropped."""
 
 
 # --------------------------------------------------------------------------- #
@@ -570,21 +652,98 @@ def _apply_silhouette(
     max_truncation: float,
 ) -> SurvivorLabel | None:
     """Set measured truncation and occlusion on a label; None if a filter rejects it."""
+    _measure(label, np.isin(decoded, body_ids), silhouette)
+    if label.occlusion_fraction > max_occlusion or label.truncation_fraction > max_truncation:
+        return None
+    if not label.truncation_exact:
+        return None
+    return label
+
+
+def _measure(label: SurvivorLabel, visible: np.ndarray, silhouette: Silhouette | None) -> None:
+    """Set a label's truncation and occlusion from its survivor-alone silhouette."""
     if silhouette is None:
         raise ValueError(
             f"survivor {label.survivor_id} is visible but has no silhouette "
             "(silhouettes must come from the same pose and survivors)"
         )
-    visible = np.isin(decoded, body_ids)
     label.total_expected_pixels = silhouette.in_frame_pixels
     label.truncation_fraction = silhouette.truncation_fraction
     label.occlusion_fraction = silhouette.occlusion_fraction(visible)
     label.truncation_exact = silhouette.exact
-    if label.occlusion_fraction > max_occlusion or label.truncation_fraction > max_truncation:
-        return None
-    if not silhouette.exact:
-        return None
-    return label
+
+
+def label_frame(
+    seg_mask: np.ndarray,
+    survivors: Sequence[Any],
+    silhouettes: Sequence[Silhouette | None],
+    config: LabelConfig | None = None,
+) -> FrameLabels:
+    """
+    Labels of one rendered frame, with the dropped survivors and their reasons.
+
+    A survivor is present when it has at least ``presence_min_area_px``
+    visible pixels (training resolution, converted to the render size). Absent
+    survivors are ignored. A present survivor's label is dropped, with every
+    reason that applies, when its visible box is shorter than
+    ``min_box_height_px`` or narrower than ``min_box_width_px`` (training
+    resolution), its truncation exceeds ``max_truncation`` (``truncated``) or
+    is only a lower bound not above it (``truncation_unbounded``), or its
+    occlusion exceeds ``max_occlusion``.
+
+    Parameters
+    ----------
+    seg_mask : np.ndarray
+        Segmentation mask of the real render (raw or decoded).
+    survivors : sequence of SurvivorInfo, int or sequence of ints
+        Survivors in the scene.
+    silhouettes : sequence of Silhouette or None
+        :meth:`SilhouetteRenderer.render` for the same pose, one per survivor.
+    config : LabelConfig, optional
+        Thresholds; defaults to :class:`LabelConfig` defaults.
+    """
+    cfg = config if config is not None else LabelConfig()
+    if len(silhouettes) != len(survivors):
+        raise ValueError(f"{len(silhouettes)} silhouettes for {len(survivors)} survivors")
+    decoded = decode_segmentation_mask(seg_mask)
+    h, w = decoded.shape[:2]
+    th = cfg.thresholds(w, h)
+
+    result = FrameLabels(labels=[], dropped=[])
+    for idx, survivor in enumerate(survivors):
+        body_ids = _survivor_body_ids(survivor)
+        visible = np.isin(decoded, body_ids)
+        n_visible = int(np.count_nonzero(visible))
+        if n_visible == 0 or n_visible < th.presence_min_pixels:
+            continue
+        label = compute_box_for_body_ids(
+            decoded,
+            body_ids,
+            min_visible_pixels=1,
+            min_box_size=0.0,
+            max_occlusion=1.0,
+            max_truncation=1.0,
+            survivor_id=idx,
+        )
+        assert label is not None  # no filter can reject it with these arguments
+        _measure(label, visible, silhouettes[idx])
+
+        x1, y1, x2, y2 = label.bbox_xyxy
+        failed = {
+            DROP_BOX_TOO_SHORT: (y2 - y1) < th.min_box_height,
+            DROP_BOX_TOO_NARROW: (x2 - x1) < th.min_box_width,
+            DROP_TRUNCATED: label.truncation_fraction > cfg.max_truncation,
+            DROP_TRUNCATION_UNBOUNDED: (
+                not label.truncation_exact and label.truncation_fraction <= cfg.max_truncation
+            ),
+            DROP_OCCLUDED: label.occlusion_fraction > cfg.max_occlusion,
+        }
+        reasons = tuple(r for r in DROP_REASONS if failed[r])
+        if reasons:
+            result.dropped.append(DroppedLabel(label=label, reasons=reasons))
+        else:
+            result.labels.append(label)
+    return result
 
 
 # --------------------------------------------------------------------------- #

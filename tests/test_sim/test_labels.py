@@ -11,6 +11,8 @@ Validates:
 6. Occlusion and truncation fraction computation.
 7. Multi-body survivor handling (grouping body IDs into a single bounding box).
 8. Round-trip label file save and load.
+9. Training-resolution thresholds converted to the render size (1280x720, 640x360).
+10. label_frame: kept and dropped labels with reasons, from synthetic silhouettes.
 """
 
 from __future__ import annotations
@@ -22,11 +24,19 @@ import numpy as np
 import pytest
 
 from sim.labels import (
+    DROP_BOX_TOO_NARROW,
+    DROP_BOX_TOO_SHORT,
+    DROP_OCCLUDED,
+    DROP_TRUNCATED,
+    DROP_TRUNCATION_UNBOUNDED,
+    LabelConfig,
+    Silhouette,
     SurvivorLabel,
     compute_box_for_body_ids,
     compute_survivor_labels,
     decode_object_id,
     decode_segmentation_mask,
+    label_frame,
     load_yolo_labels,
     save_yolo_labels,
 )
@@ -409,3 +419,183 @@ class TestFileIO:
         assert out_file.read_text(encoding="utf-8") == ""
         loaded = load_yolo_labels(out_file)
         assert len(loaded) == 0
+
+
+# --------------------------------------------------------------------------- #
+# 9. Training-resolution thresholds
+# --------------------------------------------------------------------------- #
+class TestTrainingResolutionThresholds:
+    @pytest.mark.parametrize(
+        ("width", "height", "scale"), [(1280, 720, 416 / 1280), (640, 360, 416 / 640)]
+    )
+    def test_conversion_to_render_pixels(self, width: int, height: int, scale: float) -> None:
+        cfg = LabelConfig(
+            imgsz=416, min_box_height_px=10, min_box_width_px=6, presence_min_area_px=1.6
+        )
+        th = cfg.thresholds(width, height)
+        assert cfg.scale(width, height) == pytest.approx(scale)
+        assert th.min_box_height == pytest.approx(10 / scale)
+        assert th.min_box_width == pytest.approx(6 / scale)
+        assert th.presence_min_pixels == pytest.approx(1.6 / scale**2)
+
+    def test_known_values(self) -> None:
+        cfg = LabelConfig()
+        hi, lo = cfg.thresholds(1280, 720), cfg.thresholds(640, 360)
+        assert hi.min_box_height == pytest.approx(30.769, abs=1e-3)
+        assert lo.min_box_height == pytest.approx(15.385, abs=1e-3)
+        assert hi.min_box_width == pytest.approx(18.462, abs=1e-3)
+        assert lo.min_box_width == pytest.approx(9.231, abs=1e-3)
+        assert hi.presence_min_pixels == pytest.approx(15.15, abs=0.01)
+        assert lo.presence_min_pixels == pytest.approx(3.79, abs=0.01)
+
+    def test_portrait_uses_longest_side(self) -> None:
+        assert LabelConfig().scale(360, 640) == pytest.approx(416 / 640)
+
+    def test_values_from_arena_yaml(self) -> None:
+        pytest.importorskip("yaml")
+        cfg = LabelConfig.from_arena_config(Path("configs/arena.yaml"))
+        assert cfg.imgsz == 416
+        assert cfg.min_box_height_px == 10
+        assert cfg.min_box_width_px == 6
+        assert cfg.max_truncation == 0.85
+        assert cfg.max_occlusion == 0.90
+
+    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
+        pytest.importorskip("yaml")
+        cfg_file = tmp_path / "arena.yaml"
+        cfg_file.write_text("labels:\n  min_box_hieght_px: 10\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="min_box_hieght_px"):
+            LabelConfig.from_arena_config(cfg_file)
+
+    def test_invalid_values_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            LabelConfig(max_truncation=1.5)
+        with pytest.raises(ValueError):
+            LabelConfig(min_box_width_px=-1)
+
+
+# --------------------------------------------------------------------------- #
+# 10. label_frame with synthetic silhouettes
+# --------------------------------------------------------------------------- #
+BODY = 5
+
+
+def _scene(width: int, height: int, box: tuple[int, int, int, int]) -> np.ndarray:
+    """Mask with body BODY filling box (x1, y1, x2, y2)."""
+    mask = np.full((height, width), -1, dtype=np.int32)
+    x1, y1, x2, y2 = box
+    mask[y1:y2, x1:x2] = BODY
+    return mask
+
+
+def _silhouette(in_frame: np.ndarray, outside: int = 0, exact: bool = True) -> Silhouette:
+    return Silhouette(
+        in_frame=in_frame,
+        in_frame_pixels=int(in_frame.sum()),
+        outside_pixels=outside,
+        exact=exact,
+        canvas_area_factor=1.0,
+    )
+
+
+def _frame(width, height, box, alone_box=None, outside=0, exact=True, config=None):
+    seg = _scene(width, height, box)
+    alone = _scene(width, height, alone_box or box) == BODY
+    return label_frame(seg, [BODY], [_silhouette(alone, outside, exact)], config)
+
+
+class TestLabelFrame:
+    @pytest.mark.parametrize(
+        ("width", "height", "box"),
+        [(1280, 720, (100, 100, 120, 140)), (640, 360, (50, 50, 60, 70))],
+    )
+    def test_narrow_standing_figure_kept(self, width, height, box) -> None:
+        # 20 x 40 px at 1280 = 6.5 x 13 px at 416; 10 x 20 px at 640 is the same.
+        result = _frame(width, height, box)
+        assert len(result.labels) == 1 and result.dropped == []
+        assert result.labels[0].truncation_fraction == 0.0
+        assert result.labels[0].occlusion_fraction == 0.0
+
+    @pytest.mark.parametrize(
+        ("width", "height", "box"),
+        [(1280, 720, (100, 100, 115, 140)), (640, 360, (50, 50, 58, 70))],
+    )
+    def test_too_narrow_dropped(self, width, height, box) -> None:
+        # 15 px at 1280 = 4.9 px at 416; 8 px at 640 = 5.2 px at 416.
+        result = _frame(width, height, box)
+        assert result.labels == []
+        assert result.dropped[0].reasons == (DROP_BOX_TOO_NARROW,)
+
+    @pytest.mark.parametrize(
+        ("width", "height", "box"),
+        [(1280, 720, (100, 100, 140, 125)), (640, 360, (50, 50, 70, 62))],
+    )
+    def test_too_short_dropped(self, width, height, box) -> None:
+        # 25 px at 1280 = 8.1 px at 416; 12 px at 640 = 7.8 px at 416.
+        result = _frame(width, height, box)
+        assert result.dropped[0].reasons == (DROP_BOX_TOO_SHORT,)
+
+    def test_presence_floor_scales_with_render_size(self) -> None:
+        # 9 px at 1280x720 is under the floor (15.1 px): absent, not dropped.
+        absent = _frame(1280, 720, (10, 10, 13, 13))
+        assert absent.labels == [] and absent.dropped == []
+        # 4 px at 640x360 is over the floor (3.8 px): present, dropped for size.
+        present = _frame(640, 360, (10, 10, 12, 12))
+        assert present.labels == []
+        assert present.dropped[0].reasons == (DROP_BOX_TOO_SHORT, DROP_BOX_TOO_NARROW)
+
+    def test_truncated(self) -> None:
+        box = (0, 100, 40, 160)  # 2400 px in frame
+        result = _frame(1280, 720, box, outside=21600)  # 90 % outside
+        assert result.dropped[0].reasons == (DROP_TRUNCATED,)
+        assert result.dropped[0].label.truncation_fraction == pytest.approx(0.9)
+
+    def test_truncation_kept_below_limit(self) -> None:
+        result = _frame(1280, 720, (0, 100, 40, 160), outside=2400)
+        assert result.labels[0].truncation_fraction == pytest.approx(0.5)
+
+    def test_truncation_unbounded(self) -> None:
+        result = _frame(1280, 720, (0, 100, 40, 160), outside=2400, exact=False)
+        assert result.dropped[0].reasons == (DROP_TRUNCATION_UNBOUNDED,)
+        # A lower bound already over the limit is plainly truncated.
+        result = _frame(1280, 720, (0, 100, 40, 160), outside=24000, exact=False)
+        assert result.dropped[0].reasons == (DROP_TRUNCATED,)
+
+    def test_occluded(self) -> None:
+        # Visible 40 x 40 of a 40 x 440 alone silhouette: occlusion 0.909.
+        result = _frame(1280, 720, (100, 100, 140, 140), alone_box=(100, 100, 140, 540))
+        assert result.dropped[0].reasons == (DROP_OCCLUDED,)
+        assert result.dropped[0].label.occlusion_fraction == pytest.approx(1 - 1 / 11)
+
+    def test_occlusion_kept_below_limit(self) -> None:
+        result = _frame(1280, 720, (100, 100, 140, 140), alone_box=(100, 100, 140, 180))
+        assert result.labels[0].occlusion_fraction == pytest.approx(0.5)
+
+    def test_config_thresholds_used(self) -> None:
+        strict = LabelConfig(min_box_width_px=8.0)
+        result = _frame(1280, 720, (100, 100, 120, 140), config=strict)  # 6.5 px at 416
+        assert result.dropped[0].reasons == (DROP_BOX_TOO_NARROW,)
+
+    def test_silhouette_count_must_match(self) -> None:
+        seg = _scene(320, 180, (10, 10, 60, 90))
+        with pytest.raises(ValueError, match="silhouettes"):
+            label_frame(seg, [BODY], [])
+
+    def test_visible_without_silhouette_raises(self) -> None:
+        seg = _scene(320, 180, (10, 10, 60, 90))
+        with pytest.raises(ValueError, match="no silhouette"):
+            label_frame(seg, [BODY], [None])
+
+
+class TestComputeSurvivorLabelsWithSilhouettes:
+    def test_measured_values_set(self) -> None:
+        seg = _scene(320, 180, (0, 10, 40, 90))
+        alone = _scene(320, 180, (0, 10, 40, 170)) == BODY
+        labels = compute_survivor_labels(seg, [BODY], silhouettes=[_silhouette(alone, 800)])
+        assert labels[0].truncation_fraction == pytest.approx(800 / (6400 + 800))
+        assert labels[0].occlusion_fraction == pytest.approx(0.5)
+
+    def test_unbounded_truncation_dropped(self) -> None:
+        seg = _scene(320, 180, (0, 10, 40, 90))
+        sil = _silhouette(seg == BODY, 100, exact=False)
+        assert compute_survivor_labels(seg, [BODY], silhouettes=[sil]) == []
