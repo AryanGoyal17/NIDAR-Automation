@@ -18,15 +18,17 @@ import dataclasses
 import math
 from pathlib import Path
 
-import cv2
 import numpy as np
-import pybullet as p
 import pytest
 
-from sim.camera import CameraPose, PinholeCamera
-from sim.labels import decode_segmentation_mask
-from sim.maze import MazeBuilder
-from sim.randomize import (
+p = pytest.importorskip("pybullet")
+
+import cv2  # noqa: E402
+
+from sim.camera import CameraPose, PinholeCamera  # noqa: E402
+from sim.labels import decode_segmentation_mask  # noqa: E402
+from sim.maze import MazeBuilder  # noqa: E402
+from sim.randomize import (  # noqa: E402
     DEFAULT_CONFIG_PATH,
     TEXTURED_BASE_RGBA,
     FrameAugmentor,

@@ -30,14 +30,20 @@ import math
 import os
 from dataclasses import dataclass, field
 
-import pybullet as p
 import pytest
 
-from sim.camera import CameraPose
-from sim.layout_gen import MazeGenerator
-from sim.maze import MazeBuilder, load_layout
-from sim.survivor import SurvivorPlacer
-from sim.trajectory import SequenceSkipped, TrajectorySampler, point_to_aabb_distance, pose_key
+p = pytest.importorskip("pybullet")
+
+from sim.camera import CameraPose  # noqa: E402
+from sim.layout_gen import MazeGenerator  # noqa: E402
+from sim.maze import MazeBuilder, load_layout  # noqa: E402
+from sim.survivor import SurvivorPlacer  # noqa: E402
+from sim.trajectory import (  # noqa: E402
+    SequenceSkipped,
+    TrajectorySampler,
+    point_to_aabb_distance,
+    pose_key,
+)
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("NIDAR_SCENE_TESTS") != "1",

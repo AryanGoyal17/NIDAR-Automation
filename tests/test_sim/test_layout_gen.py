@@ -19,8 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from sim.layout_gen import MazeGenerator
-from sim.maze import load_layout
+# sim.maze imports pybullet.
+pytest.importorskip("pybullet")
+
+from sim.layout_gen import MazeGenerator  # noqa: E402
+from sim.maze import load_layout  # noqa: E402
 
 ARENA_CONFIG = Path("configs/arena.yaml")
 

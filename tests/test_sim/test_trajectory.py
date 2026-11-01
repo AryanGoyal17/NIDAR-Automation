@@ -23,8 +23,11 @@ from pathlib import Path
 
 import pytest
 
-from sim.camera import CameraPose
-from sim.trajectory import (
+# sim.camera and sim.maze import pybullet.
+pytest.importorskip("pybullet")
+
+from sim.camera import CameraPose  # noqa: E402
+from sim.trajectory import (  # noqa: E402
     REJECT_BOX_TOO_LARGE,
     REJECT_SURVIVOR_CLEARANCE,
     REJECT_WALL,

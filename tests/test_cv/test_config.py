@@ -12,7 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from cv.config import ConfigDict, load_config
+# cv.config imports yaml.
+pytest.importorskip("yaml")
+
+from cv.config import ConfigDict, load_config  # noqa: E402
 
 
 def test_default_config_file_exists():

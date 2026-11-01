@@ -15,11 +15,12 @@ Validates:
 
 from __future__ import annotations
 
-import pybullet as p
 import pytest
 
-from sim.maze import FREE_CHARS, MazeBuilder, MazeResult
-from sim.survivor import (
+p = pytest.importorskip("pybullet")
+
+from sim.maze import FREE_CHARS, MazeBuilder, MazeResult  # noqa: E402
+from sim.survivor import (  # noqa: E402
     _POSTURE_BUILDERS,
     POSTURES,
     SurvivorPlacer,

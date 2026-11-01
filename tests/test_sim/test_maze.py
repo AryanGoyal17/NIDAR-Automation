@@ -18,11 +18,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pybullet as p
 import pytest
-import yaml
 
-from sim.maze import MazeBuilder, load_layout
+p = pytest.importorskip("pybullet")
+
+import yaml  # noqa: E402
+
+from sim.maze import MazeBuilder, load_layout  # noqa: E402
 
 SAMPLE_LAYOUT = Path("configs/maze_layouts/sample_maze.yaml")
 ARENA_CONFIG = Path("configs/arena.yaml")
