@@ -222,7 +222,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 
 **Empty placeholders:** `interfaces/schemas/`, `tests/test_interfaces/` (`.gitkeep` only).
 
-**README:** `README.md` exists but is out of date: it still describes the Jetson, RT-DETR and an RGB-only camera. A rewrite is planned.
+**README:** rewritten 2 Nov 2026 (`docs/readme-v0`) for the Pi + RGB-D hardware, the YOLO11n pipeline on `main`, the v0 demo results (demo run, not the ADR 009 experiment) and `[DONE]` / branch / `[PLANNED]` status; the RT-DETR and Jetson content is removed.
 
 **Planned (not built yet):**
 - **Task 3:** the frame/dataset generator is merged (`sim/generator.py`). Clutter (`sim/`) is not built yet.
