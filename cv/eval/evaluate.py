@@ -62,11 +62,13 @@ from cv.eval.metrics import (
     threshold_at_fp_budget,
 )
 from cv.logger import get_logger
+from cv.utils.offline import events_enabled, ultralytics_offline
 from cv.utils.run_info import git_state, library_versions, power_state, utc_now
 from data_tools.build_dataset import IMAGE_SUFFIXES, label_path
 from data_tools.leakage import read_list
 
 log = get_logger("evaluate", log_file=None)
+ultralytics_offline()  # before any Ultralytics import: no usage events, no downloads
 
 IMGSZ = 416
 IOU_MATCH = 0.5
@@ -340,7 +342,10 @@ def evaluate(
             "(never the sanity set), applied unchanged to every dataset"
         ),
         "models": {},
+        "ultralytics_events_enabled": events_enabled(),
     }
+    if record["ultralytics_events_enabled"]:
+        raise RuntimeError("Ultralytics usage events are enabled; refusing to run")
     per_image_rows = []
     for m in models:
         weights = resolve_weights(m)
