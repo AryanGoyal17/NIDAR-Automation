@@ -1,0 +1,1 @@
+"""NIDAR detector evaluation"""

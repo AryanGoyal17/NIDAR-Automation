@@ -188,6 +188,12 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 
 **On branch `feat/train-eval` (Task 4b-1, not merged): dataset lists, training wrapper, evaluation. Protocol: `docs/decisions/008_training_protocol.md`.**
 - `configs/dataset.yaml` + `data_tools/build_dataset.py`: Ultralytics list files, no image copied. E1 = sim_train (val sim_val); E2 = sim_train + every anchor_train image once (val sim_val + anchor_val). Anchor split by salted COCO id hash `sha256("<seed>:anchor_val:<id>")`, 0.15 to anchor_val (ASSUMPTION); the unsalted hash with seed 2026 would put no image in anchor_val, because `coco_split` picked the anchor group with the same hash (bug found on the first plan run, regression test added). Writes `<out>/{e1,e2}/{train,val}.txt, data.yaml, manifest.json` and `<out>/eval/{sim_val,anchor_val,sanity}.txt` (sanity: evaluation only). Lists sorted, absolute POSIX paths. Refuses (exit 1, nothing written): a missing image or label file, a shared group (master seed, scene index) or shared master seed / maze seed / grid / hand-made layout between sim train and val, a path under a protected dir, any `leakage.check` error (sha256, COCO id, split rules) against sanity (+ `data/test_proxy`, `data/test_real` if present). E2 anchor image share outside `anchor_share_band` [0.10, 0.50] stops before writing (exit 3) unless `--allow-anchor-share`. `--plan` prints counts only. Tests: `test_build_dataset.py` (synthetic runs and COCO sets: label path = Ultralytics `img2label_paths`, sorted deterministic lists, E2 = E1 + anchor_train once, split deterministic and independent of `coco_split`, planted group overlap, same run as train and val, shared layout, sanity path, sanity byte copy in anchor and in a sim run, share band, plan writes nothing).
+- `cv/eval/metrics.py` + `cv/eval/evaluate.py`: own greedy matching at IoU 0.5 in score order (README 6.8), TP/FP/FN/P/R/F1, AP50 with the Ultralytics 8.4 101-point integration (checked against the installed `compute_ap`), cross-check against Ultralytics `val` mAP50, sweep 0.10–0.80 step 0.05, recall at ≤ 0.2 FP/image (ASSUMPTION), recall by GT box height at 416 (<20, 20–40, 40–80, >80 px, half-open), per-image CSV. Inputs: list files or folders; only the model's `person` class is kept (class 0 for COCO models; other classes ignored). **Operating point:** the lowest confidence with ≤ 0.2 FP/image on `anchor_val` (`--operating-set`; the sanity set is refused), applied unchanged to every dataset. Every table carries "simulation validation, not arena" or "COCO sanity set, not arena". `--speed`: detector-only ms/frame at 416, batch 1, CPU and GPU, labelled "does not represent the Raspberry Pi". Ultralytics `val` writes `labels.cache` next to each `labels/` folder (seen in `data/coco_person/{anchor,sanity}/`, `data/sim_raw/dry_val/`); not images, ignored by the builder and leakage. Tests: `tests/test_cv/test_eval_metrics.py`.
+- Pretrained baselines, 2 Nov 2026, dry eval lists (`data/yolo_ds_dry/eval`; sim_val = 4-scene dry run, 128 images / 88 boxes, tiny), GPU, power plan Balanced, plugged in (AC) at start and end. Operating conf chosen on anchor_val: yolov8n 0.313, yolo11n 0.314. Full tables: `outputs/scratch/train_eval/eval_baseline/report.md` (gitignored).
+  - sim_val (simulation validation, not arena): recall 0/88 (yolov8n), 1/88 (yolo11n); AP50 ours 0.055 / 0.038, Ultralytics 0.099 / 0.065. COCO-pretrained models do not see the procedural survivors as persons.
+  - anchor_val (COCO sanity set, not arena; 166 images, 304 boxes): both TP 201, FP 33, FN 103 (P 0.859, R 0.661); AP50 ours 0.774 / 0.782, Ultralytics 0.774 / 0.788.
+  - sanity (COCO sanity set, not arena; 560 images, 1282 boxes): yolov8n P 0.883 R 0.677 FP/img 0.205; yolo11n P 0.881 R 0.687 FP/img 0.212; AP50 ours 0.805 / 0.807, Ultralytics 0.806 / 0.803. Recall <20 px: 5/77 and 7/77; 20–40 px: 54/181 and 53/181.
+  - Speed at 416, batch 1, detector only (pre + inference + post), 100 sim_val frames after 10 warm-up, median / p90 ms: yolov8n CPU 32.4 / 38.4, GPU 8.6 / 17.0; yolo11n CPU 38.9 / 60.1, GPU 11.3 / 14.9 (torch 8 threads). Development laptop only; **does not represent the Raspberry Pi**.
 - `cv/utils/run_info.py`: power plan + AC state, git commit + dirty flag, library versions, UTC time (copy of the generator's power reader; `sim/generator.py` unchanged).
 
 **Known open defects on `main`:**
@@ -211,7 +217,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
 **Planned (not built yet):**
 - **Task 3:** the frame/dataset generator is merged (`sim/generator.py`). Clutter (`sim/`) is not built yet.
 - `data_tools/` compositor and dataset builder, and the real test set (`data/test_real/`). Person cutouts from COCO are merged (`data_tools/make_person_cutouts.py`).
-- `cv/train/`, `cv/eval/`, `cv/tracking/`, the depth module, the detection API.
+- `cv/train/` (on `feat/train-eval`), `cv/tracking/`, the depth module, the detection API.
 - NCNN export and benchmark scripts, `deploy/pi/`, the handoff note.
 
 Mark anything not run as **[PLANNED]**. Never write a result into the README unless it was measured by us.
@@ -220,7 +226,7 @@ Mark anything not run as **[PLANNED]**. Never write a result into the README unl
 
 ```
 configs/            [exists] default.yaml, arena.yaml, randomization.yaml, generator.yaml, generator_train.yaml, generator_val.yaml, coco.yaml, maze_layouts/. [PLANNED] composite.yaml, train.yaml, tracking.yaml, depth settings
-cv/                 [exists] config.py, logger.py, detectors/, utils/run_info.py. [PLANNED] eval/, tracking/, train/, depth, detector_api.py
+cv/                 [exists] config.py, logger.py, detectors/, eval/ (metrics, evaluate), utils/run_info.py. [PLANNED] tracking/, train/, depth, detector_api.py
 sim/                [exists] maze, layout_gen, camera, trajectory, survivor, randomize, labels, generator (dataset runs), layouts/. [PLANNED] clutter
 data_tools/         [exists] build_dataset (E1/E2 list files, group split, leakage gate), draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download), coco_split, coco_person_sets (anchor/sanity YOLO sets), make_person_cutouts, coco_sheets, leakage (train vs protected sets). [PLANNED] compositor
 deploy/             [PLANNED] pi/
@@ -249,6 +255,7 @@ python -m data_tools.make_person_cutouts                      # data/coco_cutout
 python -m data_tools.leakage --train data/coco_person/anchor/images --cutouts data/coco_cutouts   # exit 1 on exact overlap with protected sets
 python -m data_tools.build_dataset --plan                     # E1/E2 counts and anchor share; without --plan writes data/yolo_ds/ (runs leakage, exit 1 on overlap)
 python -m cv.detectors.detect_survivors --source data/samples/ # baseline detector
+python -m cv.eval.evaluate --model yolov8n.pt --data sim_val=data/yolo_ds/eval/sim_val.txt --data anchor_val=data/yolo_ds/eval/anchor_val.txt --data sanity=data/yolo_ds/eval/sanity.txt --out outputs/eval/<name> --speed   # threshold chosen on anchor_val only
 python -m ruff check . ; python -m ruff format --check .      # lint and format
 pytest -q                                                      # tests (skips the heavy scene checks)
 $env:NIDAR_SCENE_TESTS = "1"; pytest -q tests/test_sim/test_trajectory_scenes.py   # 8 layouts x 20 seeds trajectory checks
