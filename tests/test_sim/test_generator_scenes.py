@@ -8,15 +8,17 @@ Slow, so skipped by default. Run with::
 
 - 5 random written frames re-rendered from their meta line alone
   (:func:`sim.generator.replay_frame`) are byte-identical to the written JPEG;
-- process memory stays bounded over 30 scenes in one worker.
+- process memory stays bounded over 30 scenes in one worker (measured in a
+  fresh interpreter, so other tests' imports do not change it).
 """
 
 from __future__ import annotations
 
-import gc
 import json
 import os
 import random
+import subprocess
+import sys
 from dataclasses import replace
 
 import pytest
@@ -26,11 +28,8 @@ p = pytest.importorskip("pybullet")
 import sim.generator as gen  # noqa: E402
 from sim.generator import (  # noqa: E402
     GeneratorConfig,
-    SceneTask,
-    config_hash,
     generate,
     replay_frame,
-    run_scene_task,
     yolo_text,
 )
 
@@ -69,21 +68,42 @@ def test_replay_byte_identical(cfg, tmp_path) -> None:
         assert yolo_text(labels.labels) == written, meta["frame_id"]
 
 
-def test_memory_bounded_over_30_scenes(cfg, tmp_path) -> None:
-    psutil = pytest.importorskip("psutil")
-    chash = config_hash(cfg)
-    proc = psutil.Process()
+MEMORY_SCRIPT = """
+import gc, json, sys
+from dataclasses import replace
+import psutil
+from sim.generator import GeneratorConfig, SceneTask, config_hash, run_scene_task
+cfg = replace(GeneratorConfig.from_yaml(), width=320, height=180)
+chash = config_hash(cfg)
+proc = psutil.Process()
+def rss_mb():
+    gc.collect()
+    return proc.memory_info().rss / 2**20
+marks = {0: rss_mb()}
+for i in range(30):
+    result = run_scene_task(SceneTask(cfg, sys.argv[1], %d, i, 1, chash))
+    assert result["status"] == "done", result
+    if (i + 1) %% 10 == 0:
+        marks[i + 1] = rss_mb()
+print(json.dumps(marks))
+"""
 
-    def rss_mb() -> float:
-        gc.collect()
-        return proc.memory_info().rss / 2**20
 
-    marks = {0: rss_mb()}
-    for i in range(30):
-        result = run_scene_task(SceneTask(cfg, str(tmp_path), MASTER, i, 1, chash))
-        assert result["status"] == "done", result
-        if (i + 1) % 10 == 0:
-            marks[i + 1] = rss_mb()
+def test_memory_bounded_over_30_scenes(tmp_path) -> None:
+    """
+    Measured in a fresh interpreter: in the full suite other tests load torch
+    and Ultralytics into the pytest process (RSS about 446 MB instead of about
+    61 MB), and that process's RSS noise alone exceeded the limit (2 Nov 2026).
+    """
+    pytest.importorskip("psutil")
+    out = subprocess.run(
+        [sys.executable, "-c", MEMORY_SCRIPT % MASTER, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    marks = {int(k): v for k, v in json.loads(out.stdout.strip().splitlines()[-1]).items()}
     power = gen.power_state()
     print(f"\nRSS MB after N scenes: {marks} ({power})")
     assert marks[30] - marks[10] < MAX_RSS_GROWTH_MB, marks

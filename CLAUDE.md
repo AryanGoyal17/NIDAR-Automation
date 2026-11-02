@@ -129,6 +129,7 @@ Evidence for the items below: local files `outputs/scratch/scan_report.md` (30 O
   - RSS after 0/10/20/30 scenes: 73.1/74.2/76.7/76.9 MB (heavy test run).
   - From scene 10 to 30, a client per scene grew 0.8 and 1.3 MB (scratch runs). The old pattern (one client, textures re-applied) grew 18.4 and 18.2 MB, about 0.9 MB per scene.
   - The test allows 8 MB (ASSUMPTION, between the two).
+  - Since `feat/train-eval` the memory test runs the 30 scenes in a fresh interpreter: in the full `check.ps1 -Full` suite the new eval/train tests load torch and Ultralytics into the pytest process (RSS about 446 MB), and that process grew 8.1 MB from scene 10 to 30 (failed at 8.0) while the same test alone grew 3.6 MB from 61 MB (2 Nov 2026, Balanced, AC). In a fresh interpreter: 53.0 → 54.8 MB, growth 1.8 MB.
 - `data_tools/`:
   - `check_generated.py` reads only the written files. It checks:
     - every image has a label file and a meta line, and the other way round;
