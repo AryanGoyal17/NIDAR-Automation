@@ -61,7 +61,7 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 ## 6. Status (update as you go)
 
 **Done:**
-- Foundation: folder structure, config loader, logger, environment checks, conventions, diary (days 1–2), decision records 001–006.
+- Foundation: folder structure, config loader, logger, environment checks, conventions, diary (days 1–2), decision records 001–007 (008 on `feat/train-eval`).
 - Baseline YOLOv8n detection script (`cv/detectors/detect_survivors.py`).
 - Weight downloader (`scripts/download_weights.py`; it prints sha256 but does not verify it).
 - PyBullet smoke test (`scripts/check_sim.py`).
@@ -240,7 +240,7 @@ sim/                [exists] maze, layout_gen, camera, trajectory, survivor, ran
 data_tools/         [exists] build_dataset (E1/E2 list files, group split, leakage gate), draw_boxes (contact sheets), check_generated (run validation + stats), coco_common + get_coco (COCO val2017 setup download), coco_split, coco_person_sets (anchor/sanity YOLO sets), make_person_cutouts, coco_sheets, leakage (train vs protected sets). [PLANNED] compositor
 deploy/             [PLANNED] pi/
 interfaces/schemas/ [exists, only .gitkeep] the detection JSON schema is PLANNED
-docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–006), diary/, setup/
+docs/               [exists] conventions.md, arena_questions.md, decisions/ (ADRs 001–008), diary/, setup/
 scripts/            [exists] check.ps1 (ruff check + ruff format --check + pytest; -Full adds the scene checks), check_env.py, verify_environment.py, download_weights.py, check_sim.py, sim_preview.py, setup scripts. [PLANNED] export, benchmark
 requirements/       [exists] requirements-base.txt, requirements-cv.txt, requirements-sim.txt (pybullet), requirements-pi.txt (Pi runtime, TBD items), requirements-dev.txt (requirements.txt + sim + ruff, pytest, pre-commit)
 requirements.txt    [exists] base + cv
