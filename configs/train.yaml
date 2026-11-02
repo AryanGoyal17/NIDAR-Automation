@@ -1,0 +1,28 @@
+# ==============================================================================
+# NIDAR AirMouse — Fine-tuning (cv/train/finetune.py over Ultralytics)
+# ==============================================================================
+# Protocol and reasons: docs/decisions/008_training_protocol.md.
+# Augmentation is NOT set here: Ultralytics defaults stay in effect and every
+# run records the values it actually used (run_record.json, "augmentation").
+# ==============================================================================
+
+models: [yolo11n.pt, yolov8n.pt]   # Decision (CLAUDE.md section 4); looked up in models/
+variants: [e1, e2]                 # E1 sim only, E2 sim + anchor_train (configs/dataset.yaml)
+dataset_dir: data/yolo_ds          # built by data_tools/build_dataset.py
+
+imgsz: 416                         # Decision
+epochs: 40                         # owner's choice (Task 4b-1)
+patience: 10                       # owner's choice (early stop on the val fitness of the run's own val list)
+batch: 64                          # batch probe 2 Nov 2026 (workers 0, E2 dry, 300 imgs): largest batch <= 80 % of 6144 MiB for both models (yolo11n 0.620, yolov8n 0.575); largest that fits: yolo11n 64 (128 OOM), yolov8n 128 (0.961)
+seed: 0
+single_cls: true
+device: 0
+workers: 0                         # 2 Nov 2026: workers 2 and 4 segfaulted (exit 139) after the epoch, 4 also hit WinError 1455 (commit limit); 0 is the fastest that does not crash
+cache: false                       # no RAM/disk image cache (disk on D: is short)
+project: outputs/train             # gitignored
+
+# The batch probe (--probe-batch) and dry runs (--subset) use these
+probe:
+  batches: [8, 16, 32, 64, 128]
+  subset: 300
+  gpu_memory_fraction_max: 0.80    # owner's rule: leave 20 % headroom

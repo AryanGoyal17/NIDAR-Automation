@@ -14,7 +14,7 @@ import pytest
 pytest.importorskip("ultralytics")
 
 
-@pytest.mark.parametrize("module", ["cv.eval.evaluate"])
+@pytest.mark.parametrize("module", ["cv.eval.evaluate", "cv.train.finetune"])
 def test_cli_modules_disable_events(module: str) -> None:
     code = (
         f"import {module}, os\n"
