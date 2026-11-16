@@ -63,3 +63,13 @@ Git is designed for text and source code diffs. When binary files (weights like 
 ## 4. Why Not Git LFS?
 
 While Git LFS (Large File Storage) replaces large files with text pointers, student teams frequently exhaust GitHub's free LFS bandwidth/storage quota (1 GB storage, 2 GB monthly bandwidth). Shared Drive + GitHub Releases avoids unexpected billing lockout while remaining simple and reliable.
+
+---
+
+## 5. Amendment (16 Nov 2026): handoff weights in Git
+
+The controls team needs the trained detector weights straight from the repository. By the owner's decision, **trained handoff models** (small `.pt` files, about 5–7 MB, well under GitHub's 100 MB limit) are now committed under `models/`, each with an explicit exception in `.gitignore`, and their sha256 is recorded in the README.
+
+- Committed now: `models/survivor_yolo11n_demo.pt` (v0 demo YOLO11n, sha256 `48ec15d7ad1c2b90130ae96dce98e30815d049b6c731360ae1418779d581063f`).
+- Still never committed: datasets, generated images, videos, pretrained downloads, dry-run, probe and intermediate checkpoints (`outputs/`, `runs/`).
+- Every committed weight file stays in Git history permanently, so commit only models meant for handoff, not every training run.

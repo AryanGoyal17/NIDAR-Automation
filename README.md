@@ -30,7 +30,7 @@ This repository covers **detection only**. Navigation, mapping, survivor tagging
 | Dataset builder (E1 / E2 list files, scene-level split, leakage gate) | [DONE] | [data_tools/build_dataset.py](data_tools/build_dataset.py) |
 | Training wrapper (Ultralytics, run records, batch probe) | [DONE] | [cv/train/finetune.py](cv/train/finetune.py) |
 | Evaluation (own matching, AP50, threshold sweep, height bins, laptop speed) | [DONE] | [cv/eval/](cv/eval/) |
-| v0 demo model, YOLO11n, 12 epochs (weights shared separately, not in git) | [DONE] as a demo run, not the final model | Sections 6 and 7 |
+| v0 demo model, YOLO11n, 12 epochs (weights in `models/survivor_yolo11n_demo.pt`) | [DONE] as a demo run, not the final model | Sections 6 and 7 |
 | ADR 009 forgetting protocol (paired bootstrap, scene-level sim_val) | Branch `feat/run-experiments` | not on `main` |
 | Fixed run names and resume with a dataset hash check in the training wrapper | Branch `feat/run-experiments` | not on `main` |
 | Training queue (several runs in sequence) | Work in progress on `feat/run-experiments`, not committed | not on `main` |
@@ -244,10 +244,10 @@ Pretrained baselines on the earlier dry lists (YOLOv8n and YOLO11n, 2 Nov 2026) 
 | Simple 3D body shapes, like our simulator | `survivor_yolo11n_demo.pt` (fine-tuned) | conf 0.403 | sim_val recall 0.841, precision 0.975 (simulation validation, not arena) |
 | Real people | `yolo11n.pt` (COCO-pretrained, unchanged), person class only | conf 0.314 | COCO sanity recall 0.687, precision 0.881 (COCO sanity set, not arena) |
 
-**Weights are not in this repository.**
-- The demo weights are shared separately with the owner's handoff note. Their sha256 is `48ec15d7ad1c2b90130ae96dce98e30815d049b6c731360ae1418779d581063f`; check it before use.
+**Weights:**
+- The demo weights are committed in this repository at `models/survivor_yolo11n_demo.pt` ([ADR 003](docs/decisions/003_large_files.md) amendment). Their sha256 is `48ec15d7ad1c2b90130ae96dce98e30815d049b6c731360ae1418779d581063f`; check it before use.
 - The pretrained weights come from `python scripts/download_weights.py`, at setup time only. It prints sha256 but does not verify it.
-- Put weight files in `models/`, which is gitignored.
+- Other weight files in `models/` stay gitignored; only handoff models are committed, each with an exception in `.gitignore`.
 
 **Command line** ([cv/detectors/detect_survivors.py](cv/detectors/detect_survivors.py)). Always pass `--imgsz 416`: the default from [configs/default.yaml](configs/default.yaml) is 640, the baseline setting.
 
@@ -268,7 +268,7 @@ os.environ["YOLO_OFFLINE"] = "1"  # before importing Ultralytics: no network cal
 import cv2
 from ultralytics import YOLO
 
-model = YOLO("models/survivor_yolo11n_demo.pt")  # shared separately, not in git
+model = YOLO("models/survivor_yolo11n_demo.pt")  # committed in models/
 frame = cv2.imread("frame.jpg")  # BGR numpy array
 r = model.predict(frame, conf=0.403, classes=[0], imgsz=416, verbose=False)[0]
 dets = [(*b.xyxy[0].tolist(), float(b.conf)) for b in r.boxes]  # x1, y1, x2, y2, confidence
@@ -336,7 +336,7 @@ python scripts/download_weights.py                   # setup only: yolov8n.pt an
 .\scripts\check.ps1 -Full    # adds the scene checks (NIDAR_SCENE_TESTS=1); fails on any skip not allowlisted (before a merge)
 ```
 
-**Data, training and evaluation** (commands that exist on `main`, from CLAUDE.md §7). Datasets and weights are **produced locally and never committed**. Everything lands in the gitignored `data/`, `models/` and `outputs/`.
+**Data, training and evaluation** (commands that exist on `main`, from CLAUDE.md §7). Datasets and training outputs are **produced locally and never committed**. Everything lands in the gitignored `data/`, `models/` and `outputs/`; only handoff weights in `models/` are committed (ADR 003 amendment).
 
 ```powershell
 # Synthetic frames (re-running resumes; another seed, scene count or config is refused)

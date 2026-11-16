@@ -38,6 +38,8 @@ htmlcov/
 # Model Weights & Exported Artifacts (Preserve folder structure with .gitkeep)
 models/*
 !models/.gitkeep
+# Handoff weights for the controls team are committed (ADR 003 amendment, 16 Nov 2026)
+!models/survivor_yolo11n_demo.pt
 *.pt
 *.pth
 *.onnx

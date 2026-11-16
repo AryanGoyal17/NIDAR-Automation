@@ -18,7 +18,7 @@ AirMouse: a fully autonomous drone flies inside a GPS-denied indoor maze, finds 
 
 The original deadline (22 Oct 2026) has passed. The new deadline is **TBD**. "Done" means all of these exist, run from a fresh clone, and are honest about what is tested:
 
-1. Trained models for YOLO11n and YOLOv8n (weights in `models/`, not in git).
+1. Trained models for YOLO11n and YOLOv8n (weights in `models/`; handoff models are committed, see ADR 003 amendment).
 2. Evaluation results on a small **real** test set, reported separately from simulation results.
 3. A stable detection API (Section 8) with an NCNN export and a Raspberry Pi inference script (`deploy/pi/`).
 4. README (algorithm specification, hardware requirements, results with only measured numbers) and a handoff note for the controls team.
@@ -65,7 +65,7 @@ See `docs/decisions/006_pi_rgbd_hardware.md`.
 - Baseline YOLOv8n detection script (`cv/detectors/detect_survivors.py`).
 - Weight downloader (`scripts/download_weights.py`; it prints sha256 but does not verify it).
 - PyBullet smoke test (`scripts/check_sim.py`).
-- Weights are **not** in git (`models/` is gitignored).
+- Handoff weights are in git (ADR 003 amendment, 16 Nov 2026): `models/survivor_yolo11n_demo.pt` (v0 demo YOLO11n, sha256 `48ec15d7ad1c2b90130ae96dce98e30815d049b6c731360ae1418779d581063f`), un-ignored by an explicit `.gitignore` exception. All other files in `models/` stay gitignored.
 
 **Simulator (`sim/`, exists, runs, not yet usable for training data):**
 - `maze.py`: maze builder from ASCII grids. `layout_gen.py`: random maze generator. There are 6 layouts in `sim/layouts/`.
@@ -248,7 +248,7 @@ requirements.txt    [exists] base + cv
 .pre-commit-config.yaml  [exists] ruff-check and ruff-format hooks (ruff-pre-commit v0.16.10)
 notebooks/          [exists, empty]
 tests/              [exists] test_cv/, test_sim/, test_data_tools/, test_interfaces/ (empty)
-data/  models/  outputs/   [exist, gitignored, never committed; only data/README.md is committed]. data/coco/ holds the COCO download; data/test_real/ is PLANNED; models/ holds local weights.
+data/  models/  outputs/   [exist, gitignored; only data/README.md and the handoff weights in models/ (each un-ignored in .gitignore) are committed]. data/coco/ holds the COCO download; data/test_real/ is PLANNED; models/ holds local weights.
 ```
 
 ```bash
@@ -300,7 +300,7 @@ Per-frame JSON output follows README Section 8 (frame_id, timestamps, frame size
 - Settings come from `configs/*.yaml` through `cv/config.py`. Log with `cv/logger.py`, never raw `print()` in library code.
 - Seeds everywhere; every generated dataset and training run records its seed, config and git commit.
 - Conventional commits (`feat(sim): ...`, `fix(eval): ...`, `docs: ...`), small and atomic, on a feature branch.
-- Large files (`.pt`, `.onnx`, NCNN exports, videos, datasets, generated images) are never committed. Record sha256 checksums instead.
+- Large files (videos, datasets, generated images, pretrained downloads, intermediate checkpoints) are never committed. Exception: trained handoff weights for the controls team are committed in `models/` with an explicit `.gitignore` exception and their sha256 in the README (ADR 003 amendment). Record sha256 checksums for everything else.
 
 ## 10. Rules for AI agents working in this repo
 
@@ -311,7 +311,7 @@ Per-frame JSON output follows README Section 8 (frame_id, timestamps, frame size
 5. Do not add cloud calls, telemetry, or downloads at runtime. Weights and datasets are fetched once during setup.
 6. One task = one branch, created from `main` unless the owner names another base. Never commit to a branch that holds other tasks, and never commit directly on `main`. The owner merges into `main`.
 7. Before every commit, `ruff check .`, `ruff format --check .` and `pytest` must pass. This is enforced now by the pre-commit hook (ruff) and `scripts/check.ps1` (ruff + pytest).
-8. Never commit secrets, datasets, weights, or personal information.
+8. Never commit secrets, datasets, personal information, or weights other than the handoff models allowed by the ADR 003 amendment.
 9. Keep README claims aligned with reality: [DONE] only if it exists and ran, otherwise [PLANNED].
 10. If you discover a contradiction between this file and the repo, tell me and fix the file, not the other way round, unless I say otherwise.
 11. Update Section 6 (Status) in the same commit as the change that alters the status.
